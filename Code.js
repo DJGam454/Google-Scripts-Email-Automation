@@ -4579,8 +4579,33 @@ function setupDashboard() {
     configMap.FAST_TEST_MODE === true ? "ON" : "OFF"
   );
 
-  dashboard.getRange("I6").setValue("Daily Limit");
-  dashboard.getRange("J6").setValue(configMap.DAILY_LIMIT || 0);
+dashboard.getRange("I6").setValue("Daily Usage");
+
+const dailyLimit = Number(configMap.DAILY_LIMIT) || 0;
+
+dashboard.getRange("J6").setFormula(
+  '=(' +
+    'COUNTIFS(ActivityLog!A2:A,">="&TODAY(),' +
+    'ActivityLog!A2:A,"<"&TODAY()+1,' +
+    'ActivityLog!J2:J,"SUCCESS",' +
+    'ActivityLog!D2:D,"EMAIL_1")+' +
+
+    'COUNTIFS(ActivityLog!A2:A,">="&TODAY(),' +
+    'ActivityLog!A2:A,"<"&TODAY()+1,' +
+    'ActivityLog!J2:J,"SUCCESS",' +
+    'ActivityLog!D2:D,"FOLLOWUP_1")+' +
+
+    'COUNTIFS(ActivityLog!A2:A,">="&TODAY(),' +
+    'ActivityLog!A2:A,"<"&TODAY()+1,' +
+    'ActivityLog!J2:J,"SUCCESS",' +
+    'ActivityLog!D2:D,"FOLLOWUP_2")+' +
+
+    'COUNTIFS(ActivityLog!A2:A,">="&TODAY(),' +
+    'ActivityLog!A2:A,"<"&TODAY()+1,' +
+    'ActivityLog!J2:J,"SUCCESS",' +
+    'ActivityLog!D2:D,"FOLLOWUP_3")' +
+  ')&" / ' + dailyLimit + '"'
+);
 
   dashboard.getRange("A6:J6")
     .setBackground(WHITE)
@@ -4607,8 +4632,11 @@ function setupDashboard() {
       '=COUNTIFS(Leads!D2:D,"<>",Leads!O2:O,"<>COMPLETED",Leads!O2:O,"<>INVALID",Leads!O2:O,"<>DO_NOT_CONTACT",Leads!O2:O,"<>REPLIED")'
     ],
     ["E9", "Emails Sent", "E10",
-      '=COUNTIF(ActivityLog!J2:J,"SUCCESS")'
-    ],
+  '=COUNTIFS(ActivityLog!J2:J,"SUCCESS",ActivityLog!D2:D,"EMAIL_1")+' +
+  'COUNTIFS(ActivityLog!J2:J,"SUCCESS",ActivityLog!D2:D,"FOLLOWUP_1")+' +
+  'COUNTIFS(ActivityLog!J2:J,"SUCCESS",ActivityLog!D2:D,"FOLLOWUP_2")+' +
+  'COUNTIFS(ActivityLog!J2:J,"SUCCESS",ActivityLog!D2:D,"FOLLOWUP_3")'
+],
     ["G9", "Replies", "G10",
       '=COUNTIF(Leads!O2:O,"REPLIED")'
     ],
@@ -4642,15 +4670,27 @@ function setupDashboard() {
   // SECONDARY KPIs
   // ---------------------------------------------------------
 
-  const secondary = [
-    ["A12", "Completed", "A13", '=COUNTIF(Leads!O2:O,"COMPLETED")'],
-    ["C12", "Invalid / Bounced", "C13", '=COUNTIF(Leads!O2:O,"INVALID")'],
-    ["E12", "Do Not Contact", "E13", '=COUNTIF(Leads!O2:O,"DO_NOT_CONTACT")'],
-    ["G12", "Failed Actions", "G13", '=COUNTIF(ActivityLog!J2:J,"FAILED")'],
-    ["I12", "Sent Today", "I13",
-      '=COUNTIFS(ActivityLog!A2:A,">="&TODAY(),ActivityLog!A2:A,"<"&TODAY()+1,ActivityLog!J2:J,"SUCCESS")'
-    ]
-  ];
+const secondary = [
+  ["A12", "New Leads", "A13",
+    '=COUNTIF(Leads!O2:O,"NEW")'
+  ],
+
+  ["C12", "Completed", "C13",
+    '=COUNTIF(Leads!O2:O,"COMPLETED")'
+  ],
+
+  ["E12", "Invalid / Bounced", "E13",
+    '=COUNTIF(Leads!O2:O,"INVALID")'
+  ],
+
+  ["G12", "Do Not Contact", "G13",
+    '=COUNTIF(Leads!O2:O,"DO_NOT_CONTACT")'
+  ],
+
+  ["I12", "Failed Actions", "I13",
+    '=COUNTIF(ActivityLog!J2:J,"FAILED")'
+  ]
+];
 
   secondary.forEach(function(kpi) {
     dashboard.getRange(kpi[0])
@@ -4688,7 +4728,7 @@ function setupDashboard() {
       "Current Leads",
       "Campaigns Started",
       "Replies",
-      "No Reply",
+      "Service Completed",
       "Reply Rate"
     ]])
     .setBackground(SLATE)
@@ -4702,15 +4742,23 @@ function setupDashboard() {
 
     dashboard.getRange(serviceRow, 1).setValue(service.name);
 
-    dashboard.getRange(serviceRow, 2)
-      .setFormula(
-        '=COUNTIF(Leads!H2:H,"' + safeService + '")'
-      );
+dashboard.getRange(serviceRow, 2)
+  .setFormula(
+    '=COUNTIFS(' +
+    'Leads!H2:H,"' + safeService + '",' +
+    'Leads!O2:O,"<>COMPLETED",' +
+    'Leads!O2:O,"<>INVALID",' +
+    'Leads!O2:O,"<>DO_NOT_CONTACT",' +
+    'Leads!O2:O,"<>REPLIED")'
+  );
 
-    dashboard.getRange(serviceRow, 3)
-      .setFormula(
-        '=COUNTIF(ActivityLog!F2:F,"' + safeService + '")'
-      );
+dashboard.getRange(serviceRow, 3)
+  .setFormula(
+    '=COUNTIFS(' +
+    'ActivityLog!F2:F,"' + safeService + '",' +
+    'ActivityLog!D2:D,"EMAIL_1",' +
+    'ActivityLog!J2:J,"SUCCESS")'
+  );
 
     dashboard.getRange(serviceRow, 4)
       .setFormula(
@@ -4786,6 +4834,95 @@ function setupDashboard() {
   dashboard.getRange("H17:I23")
     .setBorder(true, true, true, true, true, true, BORDER, null);
 
+// ---------------------------------------------------------
+// DELIVERY OVERVIEW
+// ---------------------------------------------------------
+
+const deliveryRow = Math.max(serviceRow + 1, 22);
+
+dashboard.getRange(deliveryRow, 1, 1, 6)
+  .merge()
+  .setValue("DELIVERY OVERVIEW")
+  .setBackground(NAVY)
+  .setFontColor(WHITE)
+  .setFontWeight("bold");
+
+dashboard.getRange(deliveryRow + 1, 1, 1, 6)
+  .setValues([[
+    "Sent Today",
+    "Sent This Week",
+    "Daily Remaining",
+    "Follow-ups Due",
+    "Daily Limit",
+    "Utilisation"
+  ]])
+  .setBackground(SLATE)
+  .setFontColor(WHITE)
+  .setFontWeight("bold")
+  .setHorizontalAlignment("center");
+
+const sendActions =
+  '((ActivityLog!D2:D="EMAIL_1")+' +
+  '(ActivityLog!D2:D="FOLLOWUP_1")+' +
+  '(ActivityLog!D2:D="FOLLOWUP_2")+' +
+  '(ActivityLog!D2:D="FOLLOWUP_3"))';
+
+dashboard.getRange(deliveryRow + 2, 1).setFormula(
+  '=SUMPRODUCT(' +
+  '--(ActivityLog!A2:A>=TODAY()),' +
+  '--(ActivityLog!A2:A<TODAY()+1),' +
+  '--(ActivityLog!J2:J="SUCCESS"),' +
+  '--(' + sendActions + '>0))'
+);
+
+dashboard.getRange(deliveryRow + 2, 2).setFormula(
+  '=SUMPRODUCT(' +
+  '--(ActivityLog!A2:A>=TODAY()-WEEKDAY(TODAY(),2)+1),' +
+  '--(ActivityLog!A2:A<TODAY()+1),' +
+  '--(ActivityLog!J2:J="SUCCESS"),' +
+  '--(' + sendActions + '>0))'
+);
+
+dashboard.getRange(deliveryRow + 2, 3).setFormula(
+  '=MAX(0,' + dailyLimit + '-A' + (deliveryRow + 2) + ')'
+);
+
+dashboard.getRange(deliveryRow + 2, 5)
+  .setValue(dailyLimit);
+
+dashboard.getRange(deliveryRow + 2, 4)
+  .setValue("-");
+
+dashboard.getRange(deliveryRow + 2, 6)
+  .setFormula(
+    '=IFERROR(A' +
+    (deliveryRow + 2) +
+    '/E' +
+    (deliveryRow + 2) +
+    ',0)'
+  )
+  .setNumberFormat("0.0%");
+
+dashboard.getRange(
+  deliveryRow + 2,
+  1,
+  1,
+  6
+)
+  .setFontSize(14)
+  .setFontWeight("bold")
+  .setHorizontalAlignment("center")
+  .setBackground(LIGHT)
+  .setBorder(
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    BORDER,
+    null
+  );
   // ---------------------------------------------------------
   // RECENT ACTIVITY
   // ---------------------------------------------------------
