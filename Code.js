@@ -39,7 +39,8 @@ function processEmails() {
     String(aiConfig.AI_ENABLED).toUpperCase() === "TRUE";
 
 
-  // NEW: Load normal Config for TEST_MODE
+  // Load normal Config for TEST_MODE,
+  // sender name and reply-to configuration.
   const config = getConfig();
 
 
@@ -61,17 +62,21 @@ function processEmails() {
     const row = i + 1;
 
 
+    // =================================
+    // BUILD LEAD OBJECT
+    // =================================
+
     const lead = {
-      leadId: data[i][0],
-      company: data[i][1],
-      name: data[i][2],
-      email: data[i][3],
-      website: data[i][4],
-      industry: data[i][5],
-      personalisedIntro: data[i][6],
-      service: data[i][7],
-      campaign: data[i][8],
-      status: data[i][14]
+      leadId: data[i][0],              // A - Lead ID
+      company: data[i][1],             // B - Company Name
+      name: data[i][2],                // C - Contact Name
+      email: data[i][3],               // D - Email
+      website: data[i][4],             // E - Website
+      industry: data[i][5],            // F - Industry
+      personalisedIntro: data[i][6],   // G - Personalised Intro
+      service: data[i][7],             // H - Service Assigned
+      campaign: data[i][8],            // I - Current Campaign
+      status: data[i][14]              // O - Status
     };
 
 
@@ -161,6 +166,10 @@ function processEmails() {
     }
 
 
+    // =================================
+    // SERVICE SAFETY
+    // =================================
+
     if (!lead.service) {
 
       console.log(
@@ -200,12 +209,48 @@ function processEmails() {
     }
 
 
-    // Validate the actual destination too
+    // Validate actual destination too.
+    // This matters especially in TEST_MODE.
     if (!isValidEmail(recipient)) {
 
       console.error(
         "Actual recipient is invalid: " +
         recipient
+      );
+
+      continue;
+    }
+
+
+    // =================================
+    // DUPLICATE CAMPAIGN SAFETY
+    // =================================
+    //
+    // Blocks:
+    // Same email + same service +
+    // different Lead ID where EMAIL_1
+    // was already successfully sent.
+    //
+    // Does NOT block:
+    // Website -> SEO -> Google Ads
+    // progression for the same lead/email.
+    // =================================
+
+    if (
+      hasDuplicateCampaign(
+        lead.email,
+        lead.service,
+        lead.leadId
+      )
+    ) {
+
+      console.log(
+        "Duplicate campaign skipped: " +
+        lead.email +
+        " | Service: " +
+        lead.service +
+        " | Lead ID: " +
+        lead.leadId
       );
 
       continue;
@@ -297,10 +342,30 @@ function processEmails() {
 
     try {
 
+      const sendOptions = {};
+
+
+      // Configurable Gmail display name
+      if (config.SENDER_NAME) {
+
+        sendOptions.name =
+          config.SENDER_NAME;
+      }
+
+
+      // Configurable Reply-To
+      if (config.REPLY_TO_EMAIL) {
+
+        sendOptions.replyTo =
+          config.REPLY_TO_EMAIL;
+      }
+
+
       GmailApp.sendEmail(
-        recipient,       // IMPORTANT
+        recipient,
         subject,
-        body
+        body,
+        sendOptions
       );
 
     } catch (error) {
@@ -363,11 +428,14 @@ function processEmails() {
     // FIND GMAIL THREAD
     // =================================
 
+    // Give Gmail a moment to expose the
+    // newly-created thread to search.
     Utilities.sleep(2000);
 
 
-    // IMPORTANT:
-    // Search using recipient, NOT lead.email
+    // Search using recipient rather than
+    // lead.email because TEST_MODE may
+    // redirect the actual destination.
     const threads =
       GmailApp.search(
         'in:sent to:"' +
@@ -507,7 +575,24 @@ function personaliseTemplate(text, lead) {
     return "";
   }
 
-  return text
+  const config = getConfig();
+
+  const senderName =
+    config.SENDER_NAME || "";
+
+  const replyToEmail =
+    config.REPLY_TO_EMAIL || "";
+
+  let emailSignature =
+    config.EMAIL_SIGNATURE || "";
+
+  // Allow the signature itself to contain {{SenderName}}
+  // and {{ReplyToEmail}}.
+  emailSignature = String(emailSignature)
+    .replaceAll("{{SenderName}}", senderName)
+    .replaceAll("{{ReplyToEmail}}", replyToEmail);
+
+  return String(text)
     .replaceAll("{{FirstName}}", lead.name || "")
     .replaceAll("{{Company}}", lead.company || "")
     .replaceAll("{{Website}}", lead.website || "")
@@ -515,8 +600,22 @@ function personaliseTemplate(text, lead) {
     .replaceAll(
       "{{PersonalisedIntro}}",
       lead.personalisedIntro || ""
+    )
+    .replaceAll(
+      "{{SenderName}}",
+      senderName
+    )
+    .replaceAll(
+      "{{ReplyToEmail}}",
+      replyToEmail
+    )
+    .replaceAll(
+      "{{EmailSignature}}",
+      emailSignature
     );
 }
+
+
 
 function processFollowUps() {
 
@@ -1759,18 +1858,34 @@ function checkBounces() {
   );
 
   if (threads.length === 0) {
+    console.log("=== BOUNCE CHECK COMPLETE ===");
     return;
   }
 
-  const data = leadsSheet.getDataRange().getValues();
+  const data =
+    leadsSheet.getDataRange().getValues();
+
+  // Summary counters instead of logging every
+  // unrecognized bounce message individually.
+  let messagesScanned = 0;
+  let identifiedBounces = 0;
+  let unidentifiedMessages = 0;
+  let leadsMarkedInvalid = 0;
+  let alreadyInvalid = 0;
+
 
   for (let t = 0; t < threads.length; t++) {
 
-    const messages = threads[t].getMessages();
+    const messages =
+      threads[t].getMessages();
+
 
     for (let m = 0; m < messages.length; m++) {
 
-      const message = messages[m];
+      messagesScanned++;
+
+      const message =
+        messages[m];
 
       const body =
         message.getPlainBody();
@@ -1778,14 +1893,16 @@ function checkBounces() {
       const bouncedEmail =
         extractBouncedEmail(body);
 
+
       if (!bouncedEmail) {
 
-        console.log(
-          "Could not identify bounced recipient."
-        );
+        unidentifiedMessages++;
 
         continue;
       }
+
+
+      identifiedBounces++;
 
       console.log(
         "Bounce detected for: " +
@@ -1797,9 +1914,10 @@ function checkBounces() {
       for (let i = 1; i < data.length; i++) {
 
         const leadEmail =
-          String(data[i][3])
+          String(data[i][3] || "")
             .trim()
             .toLowerCase();
+
 
         if (
           leadEmail !==
@@ -1819,10 +1937,7 @@ function checkBounces() {
         // already-invalid lead.
         if (currentStatus === "INVALID") {
 
-          console.log(
-            bouncedEmail +
-            " is already INVALID."
-          );
+          alreadyInvalid++;
 
           break;
         }
@@ -1868,17 +1983,45 @@ function checkBounces() {
         );
 
 
+        leadsMarkedInvalid++;
+
+
         console.log(
           bouncedEmail +
           " marked INVALID due to bounce."
         );
+
 
         break;
       }
     }
   }
 
-  console.log("=== BOUNCE CHECK COMPLETE ===");
+
+  // =================================
+  // BOUNCE SCAN SUMMARY
+  // =================================
+
+  console.log(
+    "Bounce scan summary | " +
+    "Threads: " +
+    threads.length +
+    " | Messages: " +
+    messagesScanned +
+    " | Bounces identified: " +
+    identifiedBounces +
+    " | Unrecognized messages: " +
+    unidentifiedMessages +
+    " | Leads marked INVALID: " +
+    leadsMarkedInvalid +
+    " | Already INVALID: " +
+    alreadyInvalid
+  );
+
+
+  console.log(
+    "=== BOUNCE CHECK COMPLETE ==="
+  );
 }
 
 function extractBouncedEmail(body) {
@@ -4255,9 +4398,9 @@ function buildEmailPreview(lead, step) {
 
 
   return {
-    subject: subject,
-    body: body
-  };
+  subject: subject,
+  body: body
+};
 }
 function generatePreview() {
 
@@ -4356,10 +4499,10 @@ function generatePreview() {
 
 
       const previewText =
-        "SUBJECT:\n" +
-        email.subject +
-        "\n\nBODY:\n" +
-        email.body;
+  "SUBJECT:\n" +
+  email.subject +
+  "\n\nBODY:\n" +
+  email.body;
 
 
       previewSheet.appendRow([
@@ -4927,7 +5070,7 @@ dashboard.getRange(
   // RECENT ACTIVITY
   // ---------------------------------------------------------
 
-  const activityStartRow = Math.max(serviceRow + 2, 26);
+  const activityStartRow = Math.max(deliveryRow + 5, 28);
 
   dashboard.getRange(
     activityStartRow,
@@ -5087,4 +5230,70 @@ dashboard.getRange(
     "Dashboard setup complete. Active services: " +
     services.length
   );
+}
+/**
+ * Returns true when the same email address has already started
+ * the same service under a different Lead ID.
+ *
+ * This does NOT block legitimate progression to another service.
+ */
+function hasDuplicateCampaign(email, service, leadId) {
+
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  const normalizedService = String(service || "")
+    .trim();
+
+  const normalizedLeadId = String(leadId || "")
+    .trim();
+
+  if (!normalizedEmail || !normalizedService) {
+    return false;
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activitySheet = ss.getSheetByName("ActivityLog");
+
+  if (!activitySheet || activitySheet.getLastRow() < 2) {
+    return false;
+  }
+
+  const data = activitySheet.getDataRange().getValues();
+
+  // IMPORTANT:
+  // Adjust these indexes ONLY if your ActivityLog columns differ.
+  //
+  // A = Timestamp
+  // B = Lead ID
+  // C = Email
+  // D = Action
+  // F = Service
+  // J = Result
+
+  for (let i = 1; i < data.length; i++) {
+
+    const loggedLeadId = String(data[i][1] || "").trim();
+
+    const loggedEmail = String(data[i][2] || "")
+      .trim()
+      .toLowerCase();
+
+    const action = String(data[i][3] || "").trim();
+    const loggedService = String(data[i][5] || "").trim();
+    const result = String(data[i][9] || "").trim();
+
+    if (
+      loggedEmail === normalizedEmail &&
+      loggedService === normalizedService &&
+      action === "EMAIL_1" &&
+      result === "SUCCESS" &&
+      loggedLeadId !== normalizedLeadId
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
