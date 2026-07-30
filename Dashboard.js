@@ -1,510 +1,3 @@
-function testReadSheet() {
-
-  const sheet = SpreadsheetApp
-    .getActiveSpreadsheet()
-    .getSheetByName("Leads");
-
-  const data = sheet.getDataRange().getValues();
-
-  console.log(data);
-}
-
-
-
-function testFollowUp() {
-
-  const sheet = SpreadsheetApp
-    .getActiveSpreadsheet()
-    .getSheetByName("Leads");
-
-  // We're testing row 2 only
-  const row = 2;
-
-  // P = Gmail Thread ID
-  const threadId = sheet
-    .getRange(row, 16)
-    .getValue();
-
-  if (!threadId) {
-    console.log("No Gmail Thread ID found.");
-    return;
-  }
-
-  console.log("Using Thread ID: " + threadId);
-
-  // Find existing Gmail conversation
-  const thread = GmailApp.getThreadById(threadId);
-
-  if (!thread) {
-    console.log("Could not find Gmail thread.");
-    return;
-  }
-
-  // Reply inside that conversation
-  thread.reply(
-    "Hi Divyan,\n\n" +
-    "Just following up on my previous email.\n\n" +
-    "This follow-up was sent automatically using the stored Gmail Thread ID.\n\n" +
-    "Regards,\n" +
-    "Divyan"
-  );
-
-  console.log("Follow-up sent inside existing Gmail thread.");
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function logActivity(
-  lead,
-  action,
-  status,
-  result,
-  messageId,
-  threadId,
-  errorMessage
-) {
-
-  const sheet = SpreadsheetApp
-    .getActiveSpreadsheet()
-    .getSheetByName("ActivityLog");
-
-  if (!sheet) {
-    console.error("ActivityLog sheet not found.");
-    return;
-  }
-
-  sheet.appendRow([
-    new Date(),                    // Timestamp
-    lead.leadId || "",             // Lead ID
-    lead.email || "",              // Email
-    action || "",                  // Action
-    lead.campaign || "",           // Campaign
-    lead.service || "",            // Service
-    status || "",                  // Status
-    messageId || "",               // Gmail Message ID
-    threadId || "",                // Gmail Thread ID
-    result || "",                  // SUCCESS / FAILED
-    errorMessage || ""             // Error
-  ]);
-}
-
-function testDailyCount() {
-
-  const count = getEmailsSentToday();
-
-  console.log(
-    "Emails sent today: " + count
-  );
-}
-
-
-function testEmailValidation() {
-
-  const emails = [
-    "test@gmail.com",
-    "hello@company.co.uk",
-    "johncompany.com",
-    "abc@",
-    "",
-    "hello @gmail.com"
-  ];
-
-  emails.forEach(function(email) {
-
-    console.log(
-      email + " → " + isValidEmail(email)
-    );
-
-  });
-}
-
-function testBounceParser() {
-
-  const testBodies = [
-
-    "Final-Recipient: rfc822; fakeperson@example.com",
-
-    "Original-Recipient: rfc822; customer@testcompany.com",
-
-    "Recipient: anotherperson@example.org",
-
-    "Your message wasn't delivered to broken@example.com because the address couldn't be found."
-
-  ];
-
-
-  testBodies.forEach(function(body) {
-
-    const email =
-      extractBouncedEmail(body);
-
-    console.log(
-      body + " → " + email
-    );
-
-  });
-}
-
-
-
-
-
-
-
-function testPersonalisationQuality() {
-
-  const services = [
-    "Website Development",
-    "SEO",
-    "Google Ads"
-  ];
-
-
-  services.forEach(function(service) {
-
-    const testLead = {
-
-      name: "Divyan",
-
-      company: "Test Co",
-
-      website: "https://test.com",
-
-      industry: "Technology",
-
-      service: service
-
-    };
-
-
-    try {
-
-      console.log(
-        "============================"
-      );
-
-      console.log(
-        "Testing service: " +
-        service
-      );
-
-
-      const intro =
-        generatePersonalisation(
-          testLead
-        );
-
-
-      console.log(
-        "RESULT: " +
-        intro
-      );
-
-
-    } catch (error) {
-
-      console.error(
-        service +
-        " failed: " +
-        error.message
-      );
-
-    }
-
-  });
-
-}
-
-function testWorkingDay() {
-
-  const config =
-    getConfig();
-
-
-  const result =
-    isWorkingDay(config);
-
-
-  console.log(
-    "Automation allowed today: " +
-    result
-  );
-}
-
-
-function testSendingWindow() {
-
-  const config =
-    getConfig();
-
-
-  const result =
-    isWithinSendingWindow(config);
-
-
-  console.log(
-    "Inside sending window: " +
-    result
-  );
-}
-
-function testAutomationSchedule() {
-
-  const allowed =
-    canAutomationRunNow();
-
-
-  console.log(
-    "Final schedule result: " +
-    allowed
-  );
-}
-
-
-
-function testFollowUpTiming() {
-
-  const config =
-    getConfig();
-
-
-  console.log(
-    "FAST_TEST_MODE: " +
-    isFastTestMode(config)
-  );
-
-
-  for (
-    let followUp = 1;
-    followUp <= 3;
-    followUp++
-  ) {
-
-    const delay =
-      getFollowUpDelay(
-        config,
-        followUp
-      );
-
-
-    console.log(
-      "Follow-up " +
-      followUp +
-      ": " +
-      delay.value +
-      " " +
-      delay.mode
-    );
-  }
-}
-
-
-
-function buildEmailPreview(lead, step) {
-
-  const template =
-    getTemplate(
-      lead.service,
-      step
-    );
-
-  if (!template) {
-    throw new Error(
-      "Template not found: " +
-      lead.service +
-      " / " +
-      step
-    );
-  }
-
-
-  const subject =
-    personaliseTemplate(
-      template.subject,
-      lead
-    );
-
-
-  const body =
-    personaliseTemplate(
-      template.body,
-      lead
-    );
-
-
-  return {
-  subject: subject,
-  body: body
-};
-}
-function generatePreview() {
-
-  const config = getConfig();
-
-  const ss =
-    SpreadsheetApp.getActiveSpreadsheet();
-
-  const leadsSheet =
-    ss.getSheetByName("Leads");
-
-  const previewSheet =
-    ss.getSheetByName("Preview");
-
-
-  if (!leadsSheet) {
-    throw new Error("Leads sheet not found.");
-  }
-
-  if (!previewSheet) {
-    throw new Error("Preview sheet not found.");
-  }
-
-
-  // Clear old previews but preserve header
-  const lastRow =
-    previewSheet.getLastRow();
-
-  if (lastRow > 1) {
-
-    previewSheet
-      .getRange(
-        2,
-        1,
-        lastRow - 1,
-        previewSheet.getLastColumn()
-      )
-      .clearContent();
-  }
-
-
-  // Generate missing AI intros first.
-  generateMissingPersonalizations();
-
-
-  // Reload because AI may have updated Leads.
-  const data =
-    leadsSheet
-      .getDataRange()
-      .getValues();
-
-
-  let previewCount = 0;
-
-
-  for (let i = 1; i < data.length; i++) {
-
-    const lead = {
-
-      leadId: data[i][0],
-      company: data[i][1],
-      name: data[i][2],
-      email: data[i][3],
-      website: data[i][4],
-      industry: data[i][5],
-      personalisedIntro: data[i][6],
-      service: data[i][7],
-      campaign: data[i][8],
-      status: data[i][14]
-
-    };
-
-
-    if (lead.status !== "NEW") {
-      continue;
-    }
-
-
-    if (!lead.email) {
-      continue;
-    }
-
-
-    if (!lead.service) {
-      continue;
-    }
-
-
-    try {
-
-      const email =
-        buildEmailPreview(
-          lead,
-          "EMAIL_1"
-        );
-
-
-      const previewText =
-  "SUBJECT:\n" +
-  email.subject +
-  "\n\nBODY:\n" +
-  email.body;
-
-
-      previewSheet.appendRow([
-
-        new Date(),
-        lead.leadId,
-        lead.email,
-        lead.company,
-        lead.service,
-        "EMAIL_1",
-        previewText
-
-      ]);
-
-
-      previewCount++;
-
-
-      console.log(
-        "Preview generated for " +
-        lead.email +
-        " | " +
-        lead.service
-      );
-
-
-    } catch (error) {
-
-      console.error(
-        "Preview failed for " +
-        lead.email +
-        ": " +
-        error.message
-      );
-
-    }
-
-  }
-
-
-  console.log(
-    "Preview generation complete. " +
-    previewCount +
-    " emails ready."
-  );
-}
-
-
-/**
- * Builds the final MVP operational dashboard.
- *
- * SAFE TO RE-RUN:
- * - Only clears/rebuilds the Dashboard sheet.
- * - Does NOT modify Leads, ActivityLog, Services, Config, Templates,
- *   AIResearch, Preview or AIConfig.
- */
 function setupDashboard() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -1140,9 +633,224 @@ dashboard.getRange(
     services.length
   );
 }
-/**
- * Returns true when the same email address has already started
- * the same service under a different Lead ID.
- *
- * This does NOT block legitimate progression to another service.
- */
+
+function buildEmailPreview(lead, step) {
+
+  const template =
+    getTemplate(
+      lead.service,
+      step
+    );
+
+  if (!template) {
+    throw new Error(
+      "Template not found: " +
+      lead.service +
+      " / " +
+      step
+    );
+  }
+
+
+  const subject =
+    personaliseTemplate(
+      template.subject,
+      lead
+    );
+
+
+  const body =
+    personaliseTemplate(
+      template.body,
+      lead
+    );
+
+
+  return {
+  subject: subject,
+  body: body
+};
+}
+
+function generatePreview() {
+
+  const config = getConfig();
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const leadsSheet =
+    ss.getSheetByName("Leads");
+
+  const previewSheet =
+    ss.getSheetByName("Preview");
+
+
+  if (!leadsSheet) {
+    throw new Error("Leads sheet not found.");
+  }
+
+  if (!previewSheet) {
+    throw new Error("Preview sheet not found.");
+  }
+
+
+  // Clear old previews but preserve header
+  const lastRow =
+    previewSheet.getLastRow();
+
+  if (lastRow > 1) {
+
+    previewSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        previewSheet.getLastColumn()
+      )
+      .clearContent();
+  }
+
+
+  // Generate missing AI intros first.
+  generateMissingPersonalizations();
+
+
+  // Reload because AI may have updated Leads.
+  const data =
+    leadsSheet
+      .getDataRange()
+      .getValues();
+
+
+  let previewCount = 0;
+
+
+  for (let i = 1; i < data.length; i++) {
+
+    const lead = {
+
+      leadId: data[i][0],
+      company: data[i][1],
+      name: data[i][2],
+      email: data[i][3],
+      website: data[i][4],
+      industry: data[i][5],
+      personalisedIntro: data[i][6],
+      service: data[i][7],
+      campaign: data[i][8],
+      status: data[i][14]
+
+    };
+
+
+    if (lead.status !== "NEW") {
+      continue;
+    }
+
+
+    if (!lead.email) {
+      continue;
+    }
+
+
+    if (!lead.service) {
+      continue;
+    }
+
+
+    try {
+
+      const email =
+        buildEmailPreview(
+          lead,
+          "EMAIL_1"
+        );
+
+
+      const previewText =
+  "SUBJECT:\n" +
+  email.subject +
+  "\n\nBODY:\n" +
+  email.body;
+
+
+      previewSheet.appendRow([
+
+        new Date(),
+        lead.leadId,
+        lead.email,
+        lead.company,
+        lead.service,
+        "EMAIL_1",
+        previewText
+
+      ]);
+
+
+      previewCount++;
+
+
+      console.log(
+        "Preview generated for " +
+        lead.email +
+        " | " +
+        lead.service
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        "Preview failed for " +
+        lead.email +
+        ": " +
+        error.message
+      );
+
+    }
+
+  }
+
+
+  console.log(
+    "Preview generation complete. " +
+    previewCount +
+    " emails ready."
+  );
+}
+
+function logActivity(
+  lead,
+  action,
+  status,
+  result,
+  messageId,
+  threadId,
+  errorMessage
+) {
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("ActivityLog");
+
+  if (!sheet) {
+    console.error("ActivityLog sheet not found.");
+    return;
+  }
+
+  sheet.appendRow([
+    new Date(),                    // Timestamp
+    lead.leadId || "",             // Lead ID
+    lead.email || "",              // Email
+    action || "",                  // Action
+    lead.campaign || "",           // Campaign
+    lead.service || "",            // Service
+    status || "",                  // Status
+    messageId || "",               // Gmail Message ID
+    threadId || "",                // Gmail Thread ID
+    result || "",                  // SUCCESS / FAILED
+    errorMessage || ""             // Error
+  ]);
+}
+
