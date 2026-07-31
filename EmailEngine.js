@@ -1,3 +1,13 @@
+// ============================================================
+// RANDOM DELAY HELPER
+// ============================================================
+
+function _getRandomDelay(minSeconds, maxSeconds) {
+  var min = minSeconds * 1000;
+  var max = maxSeconds * 1000;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 function testSendEmail() {
 
   const sheet = SpreadsheetApp
@@ -387,34 +397,6 @@ function processEmails() {
 
 
     // =================================
-    // UPDATE LEAD
-    // =================================
-
-    // J - Email 1 Sent
-    sheet
-      .getRange(row, 10)
-      .setValue(now);
-
-
-    // N - Last Email Date
-    sheet
-      .getRange(row, 14)
-      .setValue(now);
-
-
-    // O - Status
-    sheet
-      .getRange(row, 15)
-      .setValue("EMAIL_1_SENT");
-
-
-    // R - Last Updated
-    sheet
-      .getRange(row, 18)
-      .setValue(now);
-
-
-    // =================================
     // FIND GMAIL THREAD
     // =================================
 
@@ -446,13 +428,6 @@ function processEmails() {
       threadId =
         threads[0].getId();
 
-
-      // P - Gmail Thread ID
-      sheet
-        .getRange(row, 16)
-        .setValue(threadId);
-
-
       console.log(
         "Thread ID saved: " +
         threadId
@@ -468,6 +443,27 @@ function processEmails() {
         recipient
       );
     }
+
+
+    // =================================
+    // BATCH UPDATE LEAD
+    // =================================
+    // Columns: J(10) K(11) L(12) M(13)
+    //          N(14) O(15) P(16) Q(17) R(18)
+
+    sheet
+      .getRange(row, 10, 1, 9)
+      .setValues([[
+        now,                // J - Email 1 Sent
+        "",                 // K
+        "",                 // L
+        "",                 // M
+        now,                // N - Last Email Date
+        "EMAIL_1_SENT",     // O - Status
+        threadId,           // P - Gmail Thread ID
+        "",                 // Q
+        now                 // R - Last Updated
+      ]]);
 
 
     // =================================
@@ -489,6 +485,23 @@ function processEmails() {
       "EMAIL_1 completed for lead " +
       lead.email
     );
+
+
+    // =================================
+    // RANDOM DELAY BEFORE NEXT SEND
+    // =================================
+
+    if (i < data.length - 1) {
+
+      var wait = _getRandomDelay(3, 4);
+
+      console.log(
+        "Waiting " + Math.round(wait / 1000) +
+        "s before processing next lead..."
+      );
+
+      Utilities.sleep(wait);
+    }
   }
 }
 
@@ -994,6 +1007,20 @@ function sendFollowUp(
 
     return false;
   }
+
+
+  // =================================
+  // RANDOM DELAY BEFORE FOLLOW-UP
+  // =================================
+
+  var wait = _getRandomDelay(3, 4);
+
+  console.log(
+    "Waiting " + Math.round(wait / 1000) +
+    "s before sending " + templateStep + "..."
+  );
+
+  Utilities.sleep(wait);
 
 
   // =================================

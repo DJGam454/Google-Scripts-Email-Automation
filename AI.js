@@ -1,3 +1,43 @@
+// ============================================================
+// AI RATE LIMITER
+// ============================================================
+
+var _aiLastCallTime = 0;
+
+function _waitForAIRateLimit() {
+  var config = getAIConfig();
+  var rpm = Number(config.AI_RPM_LIMIT) || 10;
+  var minInterval = Math.ceil(60000 / rpm);
+  var jitter = Math.floor(Math.random() * 2000);
+
+  var now = Date.now();
+  var elapsed = now - _aiLastCallTime;
+
+  if (elapsed < minInterval && _aiLastCallTime > 0) {
+    var wait = minInterval - elapsed + jitter;
+    console.log(
+      "Rate limiter: waiting " +
+      Math.round(wait / 1000) +
+      "s before next AI call (RPM limit: " +
+      rpm +
+      ")"
+    );
+    Utilities.sleep(wait);
+  }
+
+  _aiLastCallTime = Date.now();
+}
+
+function _normaliseWebsiteUrl(url) {
+  if (!url) return "";
+  url = String(url).trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) {
+    url = "https://" + url;
+  }
+  return url;
+}
+
 function testGeminiKey() {
 
   const apiKey = PropertiesService
@@ -99,93 +139,153 @@ function callGemini(prompt) {
   };
 
 
-  const response =
-    UrlFetchApp.fetch(
-      url,
-      options
-    );
+  // =================================
+  // RETRY LOOP
+  // =================================
+
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+
+    try {
+
+      _waitForAIRateLimit();
+
+      const response =
+        UrlFetchApp.fetch(
+          url,
+          options
+        );
+
+      const statusCode =
+        response.getResponseCode();
+
+      const responseText =
+        response.getContentText();
+
+      if (
+        statusCode < 200 ||
+        statusCode >= 300
+      ) {
+
+        // Retry on rate limits (429) and server errors (5xx)
+        if (
+          (statusCode === 429 || statusCode >= 500) &&
+          attempt < maxRetries
+        ) {
+
+          const backoff =
+            Math.pow(2, attempt) * 1000 +
+            Math.floor(Math.random() * 2000);
+
+          console.log(
+            "Gemini " + statusCode +
+            " on attempt " + (attempt + 1) +
+            "/" + maxRetries +
+            ". Retrying in " +
+            Math.round(backoff / 1000) + "s..."
+          );
+
+          Utilities.sleep(backoff);
+          continue;
+        }
+
+        throw new Error(
+          "Gemini API error " +
+          statusCode +
+          ": " +
+          responseText
+        );
+      }
 
 
-  const statusCode =
-    response.getResponseCode();
+      const result =
+        JSON.parse(responseText);
 
 
-  const responseText =
-    response.getContentText();
+      if (
+        !result.candidates ||
+        result.candidates.length === 0
+      ) {
+
+        throw new Error(
+          "Gemini returned no candidates."
+        );
+      }
 
 
-  // -------------------------------
-  // API ERROR
-  // -------------------------------
+      const candidate =
+        result.candidates[0];
 
-  if (
-    statusCode < 200 ||
-    statusCode >= 300
-  ) {
 
-    throw new Error(
-      "Gemini API error " +
-      statusCode +
-      ": " +
-      responseText
-    );
+      if (
+        !candidate.content ||
+        !candidate.content.parts ||
+        candidate.content.parts.length === 0
+      ) {
+
+        throw new Error(
+          "Gemini returned no text content."
+        );
+      }
+
+
+      const text =
+        candidate.content.parts
+          .map(function(part) {
+            return part.text || "";
+          })
+          .join("")
+          .trim();
+
+
+      if (!text) {
+
+        throw new Error(
+          "Gemini returned an empty response."
+        );
+      }
+
+
+      return text;
+
+    } catch (error) {
+
+      lastError = error;
+      if (attempt >= maxRetries) throw error;
+
+      // Don't retry JSON parse errors
+      if (error instanceof SyntaxError) throw error;
+
+      // Don't retry client errors (4xx except 429 which is already handled)
+      if (
+        error.message &&
+        error.message.indexOf("Gemini API error 4") === 0 &&
+        error.message.indexOf("Gemini API error 429") !== 0
+      ) {
+        throw error;
+      }
+
+      const backoff =
+        Math.pow(2, attempt) * 1000 +
+        Math.floor(Math.random() * 2000);
+
+      console.log(
+        "Gemini call failed on attempt " +
+        (attempt + 1) + ": " +
+        error.message +
+        ". Retrying in " +
+        Math.round(backoff / 1000) + "s..."
+      );
+
+      Utilities.sleep(backoff);
+    }
   }
 
-
-  const result =
-    JSON.parse(responseText);
-
-
-  // -------------------------------
-  // VALIDATE RESPONSE
-  // -------------------------------
-
-  if (
-    !result.candidates ||
-    result.candidates.length === 0
-  ) {
-
-    throw new Error(
-      "Gemini returned no candidates."
-    );
-  }
-
-
-  const candidate =
-    result.candidates[0];
-
-
-  if (
-    !candidate.content ||
-    !candidate.content.parts ||
-    candidate.content.parts.length === 0
-  ) {
-
-    throw new Error(
-      "Gemini returned no text content."
-    );
-  }
-
-
-  // Combine text parts
-  const text =
-    candidate.content.parts
-      .map(function(part) {
-        return part.text || "";
-      })
-      .join("")
-      .trim();
-
-
-  if (!text) {
-
-    throw new Error(
-      "Gemini returned an empty response."
-    );
-  }
-
-
-  return text;
+  throw lastError || new Error(
+    "Gemini API max retries exceeded."
+  );
 }
 function testGeminiConnection() {
 
@@ -802,72 +902,141 @@ function callGeminiWithUrlContext(prompt) {
   };
 
 
-  const response = UrlFetchApp.fetch(
-    url,
-    options
+  // =================================
+  // RETRY LOOP (same as callGemini)
+  // =================================
+
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+
+    try {
+
+      _waitForAIRateLimit();
+
+      const response = UrlFetchApp.fetch(
+        url,
+        options
+      );
+
+      const statusCode =
+        response.getResponseCode();
+
+      const responseText =
+        response.getContentText();
+
+
+      if (
+        statusCode < 200 ||
+        statusCode >= 300
+      ) {
+
+        if (
+          (statusCode === 429 || statusCode >= 500) &&
+          attempt < maxRetries
+        ) {
+
+          const backoff =
+            Math.pow(2, attempt) * 1000 +
+            Math.floor(Math.random() * 2000);
+
+          console.log(
+            "Gemini URL Context " + statusCode +
+            " on attempt " + (attempt + 1) +
+            "/" + maxRetries +
+            ". Retrying in " +
+            Math.round(backoff / 1000) + "s..."
+          );
+
+          Utilities.sleep(backoff);
+          continue;
+        }
+
+        throw new Error(
+          "Gemini URL Context API error " +
+          statusCode +
+          ": " +
+          responseText
+        );
+      }
+
+
+      const result =
+        JSON.parse(responseText);
+
+
+      if (
+        !result.candidates ||
+        result.candidates.length === 0
+      ) {
+
+        throw new Error(
+          "Gemini returned no candidates."
+        );
+      }
+
+
+      const parts =
+        result.candidates[0]
+          .content
+          .parts;
+
+
+      const text = parts
+        .map(function(part) {
+          return part.text || "";
+        })
+        .join("")
+        .trim();
+
+
+      if (!text) {
+        throw new Error(
+          "Gemini returned no text."
+        );
+      }
+
+
+      return {
+        text: text,
+        raw: result
+      };
+
+    } catch (error) {
+
+      lastError = error;
+      if (attempt >= maxRetries) throw error;
+
+      if (error instanceof SyntaxError) throw error;
+
+      if (
+        error.message &&
+        error.message.indexOf("Gemini URL Context API error 4") === 0 &&
+        error.message.indexOf("Gemini URL Context API error 429") !== 0
+      ) {
+        throw error;
+      }
+
+      const backoff =
+        Math.pow(2, attempt) * 1000 +
+        Math.floor(Math.random() * 2000);
+
+      console.log(
+        "Gemini URL Context failed on attempt " +
+        (attempt + 1) + ": " +
+        error.message +
+        ". Retrying in " +
+        Math.round(backoff / 1000) + "s..."
+      );
+
+      Utilities.sleep(backoff);
+    }
+  }
+
+  throw lastError || new Error(
+    "Gemini URL Context max retries exceeded."
   );
-
-  const statusCode =
-    response.getResponseCode();
-
-  const responseText =
-    response.getContentText();
-
-
-  if (
-    statusCode < 200 ||
-    statusCode >= 300
-  ) {
-
-    throw new Error(
-      "Gemini URL Context API error " +
-      statusCode +
-      ": " +
-      responseText
-    );
-  }
-
-
-  const result =
-    JSON.parse(responseText);
-
-
-  if (
-    !result.candidates ||
-    result.candidates.length === 0
-  ) {
-
-    throw new Error(
-      "Gemini returned no candidates."
-    );
-  }
-
-
-  const parts =
-    result.candidates[0]
-      .content
-      .parts;
-
-
-  const text = parts
-    .map(function(part) {
-      return part.text || "";
-    })
-    .join("")
-    .trim();
-
-
-  if (!text) {
-    throw new Error(
-      "Gemini returned no text."
-    );
-  }
-
-
-  return {
-    text: text,
-    raw: result
-  };
 }
 function testWebsiteContext() {
 
@@ -952,7 +1121,7 @@ function researchWebsite(lead) {
 
 
   const website =
-    String(lead.website).trim();
+    _normaliseWebsiteUrl(lead.website);
 
 
   const prompt = `

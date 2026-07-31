@@ -1,5 +1,11 @@
 function getConfig() {
 
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get("app_config");
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
   const sheet = SpreadsheetApp
     .getActiveSpreadsheet()
     .getSheetByName("Config");
@@ -21,6 +27,8 @@ function getConfig() {
       config[key] = value;
     }
   }
+
+  cache.put("app_config", JSON.stringify(config), 300);
 
   return config;
 }
@@ -45,6 +53,12 @@ function testConfig() {
 
 function getAIConfig() {
 
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get("ai_config");
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
   const sheet = SpreadsheetApp
     .getActiveSpreadsheet()
     .getSheetByName("AIConfig");
@@ -68,6 +82,8 @@ function getAIConfig() {
       config[key] = value;
     }
   }
+
+  cache.put("ai_config", JSON.stringify(config), 300);
 
   return config;
 }
