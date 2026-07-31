@@ -249,3 +249,65 @@ function testFollowUpTiming() {
     );
   }
 }
+
+function testReplyDetection() {
+
+  const leadEmail =
+    "lead@example.com";
+
+  const repliedThread = {
+    messages: [
+      {
+        payload: {
+          headers: [
+            {
+              name: "From",
+              value: "Sender Name <me@example.com>"
+            }
+          ]
+        }
+      },
+      {
+        payload: {
+          headers: [
+            {
+              name: "From",
+              value: "Lead Person <lead@example.com>"
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  const noReplyThread = {
+    messages: [
+      {
+        payload: {
+          headers: [
+            {
+              name: "From",
+              value: "Sender Name <me@example.com>"
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  console.log(
+    "Reply expected (true): " +
+    hasReplyFromLead(
+      repliedThread,
+      leadEmail
+    )
+  );
+
+  console.log(
+    "Reply expected (false): " +
+    hasReplyFromLead(
+      noReplyThread,
+      leadEmail
+    )
+  );
+}
