@@ -109,21 +109,8 @@ function checkBounces() {
         }
 
 
-        const lead = {
-
-          leadId: data[i][0],
-          company: data[i][1],
-          name: data[i][2],
-          email: data[i][3],
-          website: data[i][4],
-          industry: data[i][5],
-          personalisedIntro: data[i][6],
-          service: data[i][7],
-          campaign: data[i][8],
-          status: currentStatus,
-          threadId: data[i][15]
-
-        };
+        const lead =
+          buildLeadFromRow(data, i);
 
 
         // O = Status

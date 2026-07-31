@@ -636,8 +636,10 @@ dashboard.getRange(
 
 function buildEmailPreview(lead, step) {
 
+  // Random variant so previews show the real selection
+  // behaviour (variant + subject travel together).
   const template =
-    getTemplate(
+    getRandomTemplate(
       lead.service,
       step
     );
@@ -652,29 +654,25 @@ function buildEmailPreview(lead, step) {
   }
 
 
-  const subject =
-    personaliseTemplate(
-      template.subject,
-      lead
-    );
-
-
-  const body =
-    personaliseTemplate(
-      template.body,
+  const email =
+    renderHtmlEmail(
+      template,
       lead
     );
 
 
   return {
-  subject: subject,
-  body: body
-};
+    subject: email.subject,
+    body: email.plainTextBody,   // legacy field: plain text
+    htmlBody: email.htmlBody,
+    plainTextBody: email.plainTextBody,
+    variantId: template.variantId,
+    theme: email.theme && email.theme.name,
+    template: template
+  };
 }
 
 function generatePreview() {
-
-  const config = getConfig();
 
   const ss =
     SpreadsheetApp.getActiveSpreadsheet();
@@ -728,20 +726,8 @@ function generatePreview() {
 
   for (let i = 1; i < data.length; i++) {
 
-    const lead = {
-
-      leadId: data[i][0],
-      company: data[i][1],
-      name: data[i][2],
-      email: data[i][3],
-      website: data[i][4],
-      industry: data[i][5],
-      personalisedIntro: data[i][6],
-      service: data[i][7],
-      campaign: data[i][8],
-      status: data[i][14]
-
-    };
+    const lead =
+      buildLeadFromRow(data, i);
 
 
     if (lead.status !== "NEW") {
@@ -768,13 +754,8 @@ function generatePreview() {
         );
 
 
-      const previewText =
-  "SUBJECT:\n" +
-  email.subject +
-  "\n\nBODY:\n" +
-  email.body;
-
-
+      // HTML renders into the Preview sheet for visual review;
+      // plain text covers the fallback clients.
       previewSheet.appendRow([
 
         new Date(),
@@ -783,7 +764,10 @@ function generatePreview() {
         lead.company,
         lead.service,
         "EMAIL_1",
-        previewText
+        email.subject,
+        email.variantId,
+        email.plainTextBody,
+        email.htmlBody
 
       ]);
 

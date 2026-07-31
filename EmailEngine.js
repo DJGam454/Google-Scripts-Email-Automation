@@ -3,8 +3,8 @@
 // ============================================================
 
 function _getRandomDelay(minSeconds, maxSeconds) {
-  var min = minSeconds * 1000;
-  var max = maxSeconds * 1000;
+  const min = minSeconds * 1000;
+  const max = maxSeconds * 1000;
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
@@ -35,8 +35,7 @@ function processEmails() {
   const aiConfig = getAIConfig();
 
   const aiEnabled =
-    aiConfig.AI_ENABLED === true ||
-    String(aiConfig.AI_ENABLED).toUpperCase() === "TRUE";
+    isFlagTrue(aiConfig.AI_ENABLED);
 
 
   // Load normal Config for TEST_MODE,
@@ -44,14 +43,7 @@ function processEmails() {
   const config = getConfig();
 
 
-  const sheet = SpreadsheetApp
-    .getActiveSpreadsheet()
-    .getSheetByName("Leads");
-
-  if (!sheet) {
-    throw new Error("Leads sheet not found.");
-  }
-
+  const sheet = getLeadsSheet();
 
   const data =
     sheet.getDataRange().getValues();
@@ -66,18 +58,8 @@ function processEmails() {
     // BUILD LEAD OBJECT
     // =================================
 
-    const lead = {
-      leadId: data[i][0],              // A - Lead ID
-      company: data[i][1],             // B - Company Name
-      name: data[i][2],                // C - Contact Name
-      email: data[i][3],               // D - Email
-      website: data[i][4],             // E - Website
-      industry: data[i][5],            // F - Industry
-      personalisedIntro: data[i][6],   // G - Personalised Intro
-      service: data[i][7],             // H - Service Assigned
-      campaign: data[i][8],            // I - Current Campaign
-      status: data[i][14]              // O - Status
-    };
+    const lead =
+      buildLeadFromRow(data, i);
 
 
     // =================================
@@ -258,11 +240,13 @@ function processEmails() {
 
 
     // =================================
-    // GET EMAIL 1 TEMPLATE
+    // GET EMAIL 1 TEMPLATE (random variant)
     // =================================
+    // One variant is chosen at random; the variant carries its
+    // own subject — subjects are never randomized separately.
 
     const template =
-      getTemplate(
+      getRandomTemplate(
         lead.service,
         "EMAIL_1"
       );
@@ -283,18 +267,17 @@ function processEmails() {
     // PERSONALISE TEMPLATE
     // =================================
 
-    const subject =
-      personaliseTemplate(
-        template.subject,
+    const email =
+      renderHtmlEmail(
+        template,
         lead
       );
 
+    const subject = email.subject;
 
-    const body =
-      personaliseTemplate(
-        template.body,
-        lead
-      );
+    const body = email.plainTextBody;
+
+    const htmlBody = email.htmlBody;
 
 
     // =================================
@@ -358,6 +341,14 @@ function processEmails() {
 
         sendOptions.replyTo =
           config.REPLY_TO_EMAIL;
+      }
+
+
+      // HTML body with plain-text fallback
+      if (htmlBody) {
+
+        sendOptions.htmlBody =
+          htmlBody;
       }
 
 
@@ -493,7 +484,7 @@ function processEmails() {
 
     if (i < data.length - 1) {
 
-      var wait = _getRandomDelay(3, 4);
+      const wait = _getRandomDelay(3, 4);
 
       console.log(
         "Waiting " + Math.round(wait / 1000) +
@@ -509,13 +500,7 @@ function processFollowUps() {
 
   const config = getConfig();
 
-  const sheet = SpreadsheetApp
-    .getActiveSpreadsheet()
-    .getSheetByName("Leads");
-
-  if (!sheet) {
-    throw new Error("Leads sheet not found.");
-  }
+  const sheet = getLeadsSheet();
 
   const data =
     sheet.getDataRange().getValues();
@@ -523,26 +508,8 @@ function processFollowUps() {
 
   for (let i = 1; i < data.length; i++) {
 
-    const lead = {
-      leadId: data[i][0],
-      company: data[i][1],
-      name: data[i][2],
-      email: data[i][3],
-      website: data[i][4],
-      industry: data[i][5],
-      personalisedIntro: data[i][6],
-      service: data[i][7],
-      campaign: data[i][8],
-
-      email1Sent: data[i][9],
-      followup1Sent: data[i][10],
-      followup2Sent: data[i][11],
-      followup3Sent: data[i][12],
-
-      lastEmailDate: data[i][13],
-      status: data[i][14],
-      threadId: data[i][15]
-    };
+    const lead =
+      buildLeadFromRow(data, i);
 
 
     // =================================
@@ -565,18 +532,7 @@ function processFollowUps() {
     // MANUAL STOP
     // =================================
 
-    const stopStatuses = [
-      "REPLIED",
-      "INVALID",
-      "DO_NOT_CONTACT"
-    ];
-
-
-    if (
-      stopStatuses.includes(
-        lead.status
-      )
-    ) {
+    if (STOP_STATUSES.includes(lead.status)) {
 
       console.log(
         "Skipping " +
@@ -590,236 +546,12 @@ function processFollowUps() {
 
 
     // =================================
-    // FOLLOW-UP STATUSES
-    // =================================
-
-    const followUpStatuses = [
-      "EMAIL_1_SENT",
-      "FOLLOWUP_1_SENT",
-      "FOLLOWUP_2_SENT",
-      "FOLLOWUP_3_SENT"
-    ];
-
-
-    if (
-      !followUpStatuses.includes(
-        lead.status
-      )
-    ) {
-      continue;
-    }
-
-
-    // =================================
-    // THREAD ID CHECK
-    // =================================
-
-    if (!lead.threadId) {
-
-      console.error(
-        "Cannot process follow-up for " +
-        lead.email +
-        ": Gmail Thread ID missing."
-      );
-
-
-      logActivity(
-        lead,
-        "FOLLOWUP_THREAD_MISSING",
-        lead.status,
-        "FAILED",
-        "",
-        "",
-        "Gmail Thread ID missing"
-      );
-
-
-      continue;
-    }
-
-
-    // =================================
-    // LAST EMAIL DATE CHECK
-    // =================================
-
-    if (!lead.lastEmailDate) {
-
-      console.log(
-        "Skipping " +
-        lead.email +
-        ": No Last Email Date"
-      );
-
-      continue;
-    }
-
-
-    // =================================
-    // FOLLOW-UP 1
-    // =================================
-
-    if (
-      lead.status === "EMAIL_1_SENT"
-    ) {
-
-      const due =
-        isFollowUpDue(
-          lead.lastEmailDate,
-          1,
-          config
-        );
-
-
-      if (!due) {
-        continue;
-      }
-
-
-      console.log(
-        "Preparing FOLLOWUP_1 for " +
-        lead.email
-      );
-
-
-      const sent =
-        sendFollowUp(
-          sheet,
-          i + 1,
-          lead,
-          "FOLLOWUP_1",
-          "FOLLOWUP_1_SENT",
-          11
-        );
-
-
-      if (!sent) {
-
-        console.log(
-          "FOLLOWUP_1 deferred for " +
-          lead.email
-        );
-
-      }
-
-
-      continue;
-    }
-
-
-    // =================================
-    // FOLLOW-UP 2
-    // =================================
-
-    if (
-      lead.status ===
-      "FOLLOWUP_1_SENT"
-    ) {
-
-      const due =
-        isFollowUpDue(
-          lead.lastEmailDate,
-          2,
-          config
-        );
-
-
-      if (!due) {
-        continue;
-      }
-
-
-      console.log(
-        "Preparing FOLLOWUP_2 for " +
-        lead.email
-      );
-
-
-      const sent =
-        sendFollowUp(
-          sheet,
-          i + 1,
-          lead,
-          "FOLLOWUP_2",
-          "FOLLOWUP_2_SENT",
-          12
-        );
-
-
-      if (!sent) {
-
-        console.log(
-          "FOLLOWUP_2 deferred for " +
-          lead.email
-        );
-
-      }
-
-
-      continue;
-    }
-
-
-    // =================================
-    // FOLLOW-UP 3
-    // =================================
-
-    if (
-      lead.status ===
-      "FOLLOWUP_2_SENT"
-    ) {
-
-      const due =
-        isFollowUpDue(
-          lead.lastEmailDate,
-          3,
-          config
-        );
-
-
-      if (!due) {
-        continue;
-      }
-
-
-      console.log(
-        "Preparing FOLLOWUP_3 for " +
-        lead.email
-      );
-
-
-      const sent =
-        sendFollowUp(
-          sheet,
-          i + 1,
-          lead,
-          "FOLLOWUP_3",
-          "FOLLOWUP_3_SENT",
-          13
-        );
-
-
-      if (!sent) {
-
-        console.log(
-          "FOLLOWUP_3 deferred for " +
-          lead.email
-        );
-
-      }
-
-
-      continue;
-    }
-
-
-    // =================================
     // CAMPAIGN FINISHED
     // =================================
+    // FOLLOWUP_3_SENT leads wait for the next-service delay
+    // before rotating into their next campaign.
 
-    if (
-      lead.status ===
-      "FOLLOWUP_3_SENT"
-    ) {
+    if (lead.status === "FOLLOWUP_3_SENT") {
 
       const lastEmail =
         new Date(
@@ -891,6 +623,111 @@ function processFollowUps() {
       continue;
     }
 
+
+    // =================================
+    // FOLLOW-UP STAGE RESOLUTION
+    // =================================
+    // FOLLOWUP_STEPS (Leads.js) maps the current status to the
+    // template step, next status, timestamp column and
+    // follow-up number.
+
+    const followUp =
+      FOLLOWUP_STEPS[lead.status];
+
+
+    if (!followUp) {
+      continue;
+    }
+
+
+    // =================================
+    // THREAD ID CHECK
+    // =================================
+
+    if (!lead.threadId) {
+
+      console.error(
+        "Cannot process follow-up for " +
+        lead.email +
+        ": Gmail Thread ID missing."
+      );
+
+
+      logActivity(
+        lead,
+        "FOLLOWUP_THREAD_MISSING",
+        lead.status,
+        "FAILED",
+        "",
+        "",
+        "Gmail Thread ID missing"
+      );
+
+
+      continue;
+    }
+
+
+    // =================================
+    // LAST EMAIL DATE CHECK
+    // =================================
+
+    if (!lead.lastEmailDate) {
+
+      console.log(
+        "Skipping " +
+        lead.email +
+        ": No Last Email Date"
+      );
+
+      continue;
+    }
+
+
+    // =================================
+    // FOLLOW-UP DUE CHECK
+    // =================================
+
+    const due =
+      isFollowUpDue(
+        lead.lastEmailDate,
+        followUp.number,
+        config
+      );
+
+
+    if (!due) {
+      continue;
+    }
+
+
+    console.log(
+      "Preparing " +
+      followUp.step +
+      " for " +
+      lead.email
+    );
+
+
+    const sent =
+      sendFollowUp(
+        sheet,
+        i + 1,
+        lead,
+        followUp.step,
+        followUp.nextStatus,
+        followUp.column
+      );
+
+
+    if (!sent) {
+
+      console.log(
+        followUp.step +
+        " deferred for " +
+        lead.email
+      );
+    }
   }
 }
 
@@ -937,11 +774,11 @@ function sendFollowUp(
 
 
   // =================================
-  // GET TEMPLATE
+  // GET TEMPLATE (random variant)
   // =================================
 
   const template =
-    getTemplate(
+    getRandomTemplate(
       lead.service,
       templateStep
     );
@@ -964,9 +801,9 @@ function sendFollowUp(
   // PERSONALISE BODY
   // =================================
 
-  const body =
-    personaliseTemplate(
-      template.body,
+  const email =
+    renderHtmlEmail(
+      template,
       lead
     );
 
@@ -1013,7 +850,7 @@ function sendFollowUp(
   // RANDOM DELAY BEFORE FOLLOW-UP
   // =================================
 
-  var wait = _getRandomDelay(3, 4);
+  const wait = _getRandomDelay(3, 4);
 
   console.log(
     "Waiting " + Math.round(wait / 1000) +
@@ -1029,11 +866,10 @@ function sendFollowUp(
 
   try {
 
-    // Keep using your existing
-    // working threading implementation.
     sendThreadedFollowUp(
       lead,
-      body
+      email,
+      template
     );
 
   } catch (error) {
@@ -1118,7 +954,7 @@ function sendFollowUp(
   return true;
 }
 
-function sendThreadedFollowUp(lead, body) {
+function sendThreadedFollowUp(lead, email, template) {
 
   // --------------------------------
   // CONFIG + RECIPIENT
@@ -1200,14 +1036,14 @@ function sendThreadedFollowUp(lead, body) {
   }
 
 
-  const subject =
+  const threadSubject =
     getHeader("Subject");
 
   const latestMessageId =
     getHeader("Message-ID");
 
 
-  if (!subject) {
+  if (!threadSubject) {
 
     throw new Error(
       "Thread message has no Subject header."
@@ -1224,30 +1060,31 @@ function sendThreadedFollowUp(lead, body) {
 
 
   // --------------------------------
-  // BUILD MIME EMAIL
+  // SUBJECT RESOLUTION
+  // --------------------------------
+  // A variant may define its own subject. When it does, it is
+  // used (threading is preserved by In-Reply-To/References);
+  // when blank, the thread's existing subject is reused.
+
+  const subject =
+    email.subject
+      ? email.subject
+      : threadSubject;
+
+
+  // --------------------------------
+  // BUILD MIME EMAIL (multipart/alternative)
   // --------------------------------
 
-  const mimeMessage = [
-
-    "To: " + recipient,
-
-    "Subject: " + subject,
-
-    "In-Reply-To: " +
-      latestMessageId,
-
-    "References: " +
-      latestMessageId,
-
-    "MIME-Version: 1.0",
-
-    'Content-Type: text/plain; charset="UTF-8"',
-
-    "",
-
-    body
-
-  ].join("\r\n");
+  const mimeMessage =
+    buildMultipartAlternative({
+      to: recipient,
+      subject: subject,
+      inReplyTo: latestMessageId,
+      references: latestMessageId,
+      plainTextBody: email.plainTextBody,
+      htmlBody: email.htmlBody
+    });
 
 
   // --------------------------------
@@ -1332,10 +1169,7 @@ function runAutomation() {
     const config = getConfig();
 
     // Master ON/OFF switch
-    if (
-      config.AUTOMATION_ENABLED !== true &&
-      String(config.AUTOMATION_ENABLED).toUpperCase() !== "TRUE"
-    ) {
+    if (!isFlagTrue(config.AUTOMATION_ENABLED)) {
 
       console.log(
         "Automation is currently disabled."
@@ -1393,11 +1227,7 @@ console.log("=== AUTOMATION COMPLETED ===");
 
 function getDelay(config, settingName) {
 
-  const fastTestMode =
-    config.FAST_TEST_MODE === true ||
-    String(config.FAST_TEST_MODE).toUpperCase() === "TRUE";
-
-  if (fastTestMode) {
+  if (isFastTestMode(config)) {
     return 0;
   }
 

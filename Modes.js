@@ -1,31 +1,37 @@
-function isFastTestMode(config) {
+// ============================================================
+// AUTOMATION MODES & RECIPIENT RESOLUTION
+// ============================================================
+
+// ============================================================
+// BOOLEAN PARSING
+// ============================================================
+// Sheets may return booleans as real booleans or as the strings
+// "TRUE"/"FALSE". This is the single canonical parser for
+// config and sheet flag cells. Never inline new boolean parsing.
+
+function isFlagTrue(value) {
 
   return (
-    config.FAST_TEST_MODE === true ||
-    String(config.FAST_TEST_MODE)
+    value === true ||
+    String(value)
       .trim()
       .toUpperCase() === "TRUE"
   );
+}
+
+function isFastTestMode(config) {
+
+  return isFlagTrue(config.FAST_TEST_MODE);
 }
 
 function isPreviewMode(config) {
 
-  return (
-    config.PREVIEW_MODE === true ||
-    String(config.PREVIEW_MODE)
-      .trim()
-      .toUpperCase() === "TRUE"
-  );
+  return isFlagTrue(config.PREVIEW_MODE);
 }
 
 function isTestMode(config) {
 
-  return (
-    config.TEST_MODE === true ||
-    String(config.TEST_MODE)
-      .trim()
-      .toUpperCase() === "TRUE"
-  );
+  return isFlagTrue(config.TEST_MODE);
 }
 
 function getActualRecipient(lead, config) {

@@ -71,8 +71,7 @@ function callGemini(prompt) {
 
   // Check AI toggle
   const aiEnabled =
-    config.AI_ENABLED === true ||
-    String(config.AI_ENABLED).toUpperCase() === "TRUE";
+    isFlagTrue(config.AI_ENABLED);
 
 
   if (!aiEnabled) {
@@ -472,16 +471,7 @@ For the information provided in this prompt, do not use
   try {
 
     let cleanedResponse =
-      response.trim();
-
-
-    // Defensive cleanup in case Gemini
-    // wraps JSON in markdown fences.
-    cleanedResponse = cleanedResponse
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/, "")
-      .replace(/```$/, "")
-      .trim();
+      _cleanGeminiJson(response);
 
 
     result =
@@ -601,6 +591,26 @@ function countWords(text) {
     .length;
 }
 
+// ============================================================
+// GEMINI JSON CLEANUP
+// ============================================================
+// Gemini sometimes wraps JSON in markdown code fences.
+// Strips them so JSON.parse can succeed.
+
+function _cleanGeminiJson(response) {
+
+  if (!response) {
+    return "";
+  }
+
+  return String(response)
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/, "")
+    .replace(/```$/, "")
+    .trim();
+}
+
 function generateMissingPersonalizations() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -614,8 +624,7 @@ function generateMissingPersonalizations() {
   const config = getAIConfig();
 
   const aiEnabled =
-    config.AI_ENABLED === true ||
-    String(config.AI_ENABLED).toUpperCase() === "TRUE";
+    isFlagTrue(config.AI_ENABLED);
 
 
   if (!aiEnabled) {
@@ -642,20 +651,8 @@ function generateMissingPersonalizations() {
     const row = i + 1;
 
 
-    const lead = {
-
-      leadId: data[i][0],
-      company: data[i][1],
-      name: data[i][2],
-      email: data[i][3],
-      website: data[i][4],
-      industry: data[i][5],
-      personalisedIntro: data[i][6],
-      service: data[i][7],
-      campaign: data[i][8],
-      status: data[i][14]
-
-    };
+    const lead =
+      buildLeadFromRow(data, i);
 
 
     // --------------------------------
@@ -1180,15 +1177,7 @@ RULES:
 
 
   let cleaned =
-    response.text.trim();
-
-
-  // Defensive cleanup
-  cleaned = cleaned
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/, "")
-    .replace(/```$/, "")
-    .trim();
+    _cleanGeminiJson(response.text);
 
 
   let research;
@@ -1315,77 +1304,6 @@ function testResearchPersonalisation() {
     email: "test@example.com",
 
     website: "YOUR REAL TEST WEBSITE",
-
-    industry: "Technology",
-
-    service: "SEO"
-
-  };
-
-
-  try {
-
-    console.log(
-      "=== RESEARCHING WEBSITE ==="
-    );
-
-
-    const research =
-      researchWebsite(testLead);
-
-
-    console.log(
-      "Research:"
-    );
-
-    console.log(
-      JSON.stringify(
-        research,
-        null,
-        2
-      )
-    );
-
-
-    console.log(
-      "=== GENERATING PERSONALISATION ==="
-    );
-
-
-    const intro =
-      generatePersonalisation(
-        testLead,
-        research
-      );
-
-
-    console.log(
-      "FINAL INTRO:"
-    );
-
-    console.log(intro);
-
-
-  } catch (error) {
-
-    console.error(
-      "Research personalisation test failed: " +
-      error.message
-    );
-
-  }
-}
-function testResearchPersonalisation() {
-
-  const testLead = {
-
-    name: "Divyan",
-
-    company: "YOUR TEST COMPANY",
-
-    email: "test@example.com",
-
-    website: "dynamisers.com",
 
     industry: "Technology",
 

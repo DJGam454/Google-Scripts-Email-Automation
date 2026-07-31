@@ -25,8 +25,7 @@ function getServices() {
 
     // Handle TRUE whether Sheets returns boolean or text
     const isActive =
-      active === true ||
-      String(active).toUpperCase() === "TRUE";
+      isFlagTrue(active);
 
     if (!isActive) {
       continue;
@@ -235,10 +234,11 @@ function finishCurrentCampaign(sheet, row, lead) {
   // --------------------------------
   // UPDATE SERVICE
   // --------------------------------
-// G - Personalised Intro
-sheet
-  .getRange(row, 7)
-  .clearContent();
+
+  // G - Personalised Intro
+  sheet
+    .getRange(row, 7)
+    .clearContent();
 
   // H - Service Assigned
   sheet
