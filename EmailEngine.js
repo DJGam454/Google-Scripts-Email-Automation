@@ -731,6 +731,181 @@ function processFollowUps() {
   }
 }
 
+function checkReplies() {
+
+  const sheet = getLeadsSheet();
+
+  const data =
+    sheet.getDataRange().getValues();
+
+  const activeStatuses = {
+    EMAIL_1_SENT: true,
+    FOLLOWUP_1_SENT: true,
+    FOLLOWUP_2_SENT: true,
+    FOLLOWUP_3_SENT: true
+  };
+
+  let scanned = 0;
+  let replied = 0;
+
+  for (let i = 1; i < data.length; i++) {
+
+    const row = i + 1;
+
+    const lead =
+      buildLeadFromRow(data, i);
+
+    if (!lead.threadId) {
+      continue;
+    }
+
+    if (!lead.email) {
+      continue;
+    }
+
+    if (!activeStatuses[lead.status]) {
+      continue;
+    }
+
+    scanned++;
+
+    let thread;
+
+    try {
+
+      thread = Gmail.Users.Threads.get(
+        "me",
+        lead.threadId
+      );
+
+    } catch (error) {
+
+      console.error(
+        "Reply check failed for " +
+        lead.email +
+        ": " +
+        error.message
+      );
+
+      continue;
+    }
+
+    if (!hasReplyFromLead(thread, lead.email)) {
+      continue;
+    }
+
+    const now = new Date();
+
+    sheet
+      .getRange(row, 15)
+      .setValue("REPLIED");
+
+    sheet
+      .getRange(row, 18)
+      .setValue(now);
+
+    logActivity(
+      lead,
+      "REPLY_DETECTED",
+      "REPLIED",
+      "SUCCESS",
+      "",
+      lead.threadId,
+      "Inbound reply detected in thread"
+    );
+
+    replied++;
+
+    console.log(
+      "Reply detected for " +
+      lead.email +
+      ". Status set to REPLIED."
+    );
+  }
+
+  console.log(
+    "Reply detection summary | " +
+    "Active leads scanned: " +
+    scanned +
+    " | Leads marked REPLIED: " +
+    replied
+  );
+}
+
+function hasReplyFromLead(thread, leadEmail) {
+
+  if (
+    !thread ||
+    !thread.messages ||
+    thread.messages.length === 0
+  ) {
+    return false;
+  }
+
+  const normalizedLeadEmail =
+    String(leadEmail || "")
+      .trim()
+      .toLowerCase();
+
+  if (!normalizedLeadEmail) {
+    return false;
+  }
+
+  for (let i = 0; i < thread.messages.length; i++) {
+
+    const message =
+      thread.messages[i];
+
+    const headers =
+      message &&
+      message.payload &&
+      message.payload.headers
+        ? message.payload.headers
+        : [];
+
+    const fromHeader =
+      getHeaderValue(headers, "From");
+
+    if (!fromHeader) {
+      continue;
+    }
+
+    if (
+      String(fromHeader)
+        .toLowerCase()
+        .indexOf(normalizedLeadEmail) !== -1
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getHeaderValue(headers, headerName) {
+
+  if (!headers || !headerName) {
+    return "";
+  }
+
+  for (let i = 0; i < headers.length; i++) {
+
+    const header =
+      headers[i];
+
+    if (
+      String(header.name || "")
+        .toLowerCase() ===
+      String(headerName)
+        .toLowerCase()
+    ) {
+      return header.value || "";
+    }
+  }
+
+  return "";
+}
+
 function sendFollowUp(
   sheet,
   row,
@@ -1200,13 +1375,16 @@ console.log("=== AUTOMATION STARTED ===");
 // 1. Detect bounced emails first
 checkBounces();
 
-// 2. Generate AI personalisation for NEW leads
+// 2. Detect inbound replies and stop those campaigns
+checkReplies();
+
+// 3. Generate AI personalisation for NEW leads
 generateMissingPersonalizations();
 
-// 3. Existing campaigns/follow-ups get priority
+// 4. Existing campaigns/follow-ups get priority
 processFollowUps();
 
-// 4. Send Email 1 to NEW leads
+// 5. Send Email 1 to NEW leads
 processEmails();
 
 console.log("=== AUTOMATION COMPLETED ===");
@@ -1418,5 +1596,4 @@ function isFollowUpDue(
 
   return due;
 }
-
 
