@@ -383,12 +383,4 @@ When `TEST_MODE=TRUE`, all outgoing messages route to `TEST_EMAIL` (not the lead
 - Do not send to purchased/unverified lists.
 - Regularly clean invalid/bounced leads.
 
----
-
-## Recommended next improvements
-
-- Add a dedicated `README_SETUP_EXAMPLE.md` with sample sheet rows
-- Add a validation script that checks sheet headers and required config keys
-- Add reply-intent auto-classification for `REPLIED` status
-- Add quota health monitoring notifications
 
