@@ -382,5 +382,6 @@ When `TEST_MODE=TRUE`, all outgoing messages route to `TEST_EMAIL` (not the lead
 - Keep unsubscribe language in templates/config where appropriate.
 - Do not send to purchased/unverified lists.
 - Regularly clean invalid/bounced leads.
+- Setup DKIM, SPF and DMARC for your domain for verified sending and increase inbox rates.
 
 
