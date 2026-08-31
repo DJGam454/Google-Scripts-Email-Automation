@@ -392,8 +392,3 @@ When `TEST_MODE=TRUE`, all outgoing messages route to `TEST_EMAIL` (not the lead
 - Add reply-intent auto-classification for `REPLIED` status
 - Add quota health monitoring notifications
 
----
-
-## Repository
-
-- GitHub: https://github.com/DJGam454/Google-Scripts-Email-Automation
