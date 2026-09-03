@@ -143,7 +143,7 @@ function testEmailValidation() {
   });
 }
 
-function testBounceParser() {
+function testExtractBouncedEmail() {
 
   const testBodies = [
 
