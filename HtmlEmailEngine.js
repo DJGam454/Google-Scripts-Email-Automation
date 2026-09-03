@@ -536,15 +536,142 @@ function renderUnsubscribeBlock(values, theme, config) {
 
   const message = values["UnsubscribeMessage"] || "";
 
-  if (!message) {
+  const link = values["UnsubscribeLink"] || "";
+
+  if (!message && !link) {
     return "";
+  }
+
+  // Tight symmetric spacing: message and link stacked with 8px gap,
+  // 12px top (matches divider rhythm) and 16px bottom for card closure.
+  let content = "";
+
+  if (message) {
+    content +=
+      '<div style="font-size:11px;color:#94A3B8;line-height:1.6;' +
+      'font-family:Arial,Helvetica,sans-serif;">' +
+      message +
+      '</div>';
+  }
+
+  if (link) {
+    content +=
+      '<div style="' + (message ? 'margin-top:8px;' : '') +
+      'font-size:11px;line-height:1.6;font-family:Arial,Helvetica,sans-serif;">' +
+      '<a href="' + link + '" style="color:#94A3B8;text-decoration:underline;' +
+      'font-size:11px;font-family:Arial,Helvetica,sans-serif;">' +
+      'Unsubscribe from future emails' +
+      '</a>' +
+      '</div>';
   }
 
   return (
     '<tr>' +
-    '<td align="center" style="padding:12px 32px 20px;color:#94A3B8;' +
+    '<td align="center" style="padding:12px 32px 16px;color:#94A3B8;' +
     'font-size:11px;line-height:1.6;font-family:Arial,Helvetica,sans-serif;">' +
-    message +
+    content +
+    '</td>' +
+    '</tr>'
+  );
+}
+
+// ============================================================
+// REPLY-YES BLOCK
+// ============================================================
+// Optional {{ReplyYes}} component: a mailto link so the recipient
+// can reply with a single click from clients that don't render
+// CTA buttons. Pointing at REPLY_TO_EMAIL keeps the inbox clean.
+
+var REPLY_YES_SUBJECT = "Yes";
+var REPLY_YES_BODY = "Yes";
+
+function _buildReplyMailto(email, bodyText, subjectText) {
+
+  // Backward compat: _buildReplyMailto(email, body) still works.
+  // New signature: _buildReplyMailto(email, body, subject) - keep
+  // body second, subject third.
+  if (arguments.length === 3) {
+    const params = [];
+    if (subjectText) {
+      params.push("subject=" + encodeURIComponent(subjectText));
+    }
+    if (bodyText) {
+      params.push("body=" + encodeURIComponent(bodyText));
+    }
+    const href = "mailto:" + email;
+    return params.length ? href + "?" + params.join("&") : href;
+  }
+
+  const params = [];
+
+  if (bodyText) {
+    params.push("body=" + encodeURIComponent(bodyText));
+  }
+
+  const href = "mailto:" + email;
+
+  return params.length ? href + "?" + params.join("&") : href;
+}
+
+function _buildReplyYesMailto(email) {
+  return _buildReplyMailto(email, REPLY_YES_BODY, REPLY_YES_SUBJECT);
+}
+
+function renderReplyYesBlock(values, theme, config) {
+
+  const replyTo = values["ReplyToEmail"] || config.REPLY_TO_EMAIL || "";
+  if (!replyTo) {
+    return "";
+  }
+
+  const mailtoHref = _buildReplyYesMailto(replyTo);
+
+  // Thin dividers + envelope icon in a brand-coloured circle.
+  // The whole second line is a mailto link so a single click
+  // starts the reply in the recipient's own client.
+  const envelopeIcon =
+    '<img src="https://img.icons8.com/ios-filled/50/392A9C/new-post.png" alt="" width="18" height="18" style="display:inline-block;vertical-align:middle;border:0;width:18px;height:18px;" />';
+
+  return (
+    '<tr>' +
+    '<td style="padding:12px 32px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' +
+    '<tr>' +
+    '<td style="border-top:1px solid ' + theme.cardBorder + ';font-size:0;line-height:1px;height:1px;">&nbsp;</td>' +
+    '</tr>' +
+    '</table>' +
+    '</td>' +
+    '</tr>' +
+    '<tr>' +
+    '<td style="padding:16px 32px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' +
+    '<tr>' +
+    '<td width="48" style="width:48px;vertical-align:middle;padding-right:12px;" align="center" valign="middle">' +
+    '<div style="width:40px;height:40px;border-radius:50%;background-color:#EDE9FE;text-align:center;line-height:40px;">' +
+    envelopeIcon +
+    '</div>' +
+    '</td>' +
+    '<td style="vertical-align:middle;">' +
+    '<div style="font-size:15px;color:#334155;line-height:1.5;font-family:Arial,Helvetica,sans-serif;">' +
+    'Would you like to see what we\u2019d recommend?' +
+    '</div>' +
+    '<div style="margin-top:4px;font-size:15px;color:#334155;line-height:1.5;font-family:Arial,Helvetica,sans-serif;">' +
+    '<a href="' + mailtoHref + '" style="color:' + theme.primary + ';text-decoration:underline;display:block;font-family:Arial,Helvetica,sans-serif;">' +
+    'Just reply \u201C<span style="color:' + theme.primary + ';font-weight:bold;text-decoration:underline;">Yes</span>\u201D and I\u2019ll send it over' +
+    '</a>' +
+    '</div>' +
+    '</td>' +
+    '</tr>' +
+    '</table>' +
+    '</td>' +
+    '</tr>' +
+    '<tr>' +
+    '<td style="padding:12px 32px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' +
+    '<tr>' +
+    '<td style="border-top:1px solid ' + theme.cardBorder + ';font-size:0;line-height:1px;height:1px;">&nbsp;</td>' +
+    '</tr>' +
+    '</table>' +
     '</td>' +
     '</tr>'
   );
@@ -562,6 +689,7 @@ var EMAIL_COMPONENTS = {
   FeatureList: renderFeatureList,
   PortfolioShowcase: renderPortfolioShowcase,
   CtaButton: renderCtaButton,
+  ReplyYes: renderReplyYesBlock,
   Divider: renderDivider,
   SignatureBlock: renderSignatureBlock,
   SocialLinks: renderSocialLinks,
@@ -735,10 +863,28 @@ function buildMultipartAlternative(options) {
     "----=_boundary_" +
     Utilities.getUuid().replace(/-/g, "");
 
-  const headers = [
-    "To: " + options.to,
-    "Subject: " + (options.subject || "")
-  ];
+  const headers = [];
+
+  // MIME sends pass their own From header.
+  // Without it, Gmail falls back to the account's default display
+  // name, which may differ from the configured sender.
+  if (options.fromName && options.fromEmail) {
+
+    headers.push(
+      "From: " +
+      options.fromName +
+      " <" +
+      options.fromEmail +
+      ">"
+    );
+  }
+
+  headers.push("To: " + options.to);
+  headers.push("Subject: " + (options.subject || ""));
+
+  if (options.replyTo) {
+    headers.push("Reply-To: " + options.replyTo);
+  }
 
   if (options.inReplyTo) {
     headers.push("In-Reply-To: " + options.inReplyTo);
@@ -746,6 +892,15 @@ function buildMultipartAlternative(options) {
 
   if (options.references) {
     headers.push("References: " + options.references);
+  }
+
+  // RFC 2369 / 8058 One-Click Unsubscribe.
+  // Added only when the caller supplies listUnsubscribeUrl - the
+  // visible footer link stays unchanged. When present, Gmail/Yahoo
+  // show the native Unsubscribe button and spam complaints drop.
+  if (options.listUnsubscribeUrl) {
+    headers.push("List-Unsubscribe: <" + options.listUnsubscribeUrl + ">");
+    headers.push("List-Unsubscribe-Post: List-Unsubscribe=One-Click");
   }
 
   headers.push("MIME-Version: 1.0");
@@ -761,15 +916,23 @@ function buildMultipartAlternative(options) {
     "--" + boundary,
     'Content-Type: text/plain; charset="UTF-8"',
     "",
-    options.plainTextBody || "",
-    "",
-    "--" + boundary,
-    'Content-Type: text/html; charset="UTF-8"',
-    "",
-    options.htmlBody || "",
-    "",
-    "--" + boundary + "--"
+    options.plainTextBody || ""
   ];
+
+  // HTML part only when present (parity with a text-only send
+  // when the template has no HTML body).
+  if (options.htmlBody) {
+
+    parts.push(
+      "",
+      "--" + boundary,
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      options.htmlBody
+    );
+  }
+
+  parts.push("", "--" + boundary + "--");
 
   return parts.join("\r\n");
 }
