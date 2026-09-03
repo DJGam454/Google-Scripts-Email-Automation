@@ -30,6 +30,211 @@ function testSendEmail() {
   GmailApp.sendEmail(email, subject, body);
 }
 
+// ============================================================
+// RUN SEND BUDGET
+// ============================================================
+// MAX_SENDS_PER_RUN caps how many emails (EMAIL_1 + follow-ups
+// combined) a single execution may send, so a run finishes well
+// before the 6-minute trigger limit instead of being killed
+// mid-batch. The daily limit (canSendEmail) still applies on top.
+
+var _runSendCount = 0;
+var _runSendCap = null;
+
+function _initRunSendCap(config) {
+
+  const cap = Number(config.MAX_SENDS_PER_RUN);
+
+  _runSendCap =
+    (!isNaN(cap) && cap > 0)
+      ? cap
+      : null;
+
+  _runSendCount = 0;
+}
+
+function _runSendBudgetExhausted() {
+
+  return (
+    _runSendCap !== null &&
+    _runSendCount >= _runSendCap
+  );
+}
+
+function _recordRunSend() {
+  _runSendCount++;
+}
+
+// Combined budget check: daily + hourly + domain-hourly + per-run.
+// Hourly protects Gmail quota bursts; per-domain protects Yahoo/Outlook.
+function _sendBudgetOk(emailForDomainCheck) {
+
+  if (isQuotaBlocked()) {
+    console.log("Send blocked: Gmail quota breaker tripped until midnight.");
+    return false;
+  }
+
+  if (!canSendEmail()) {
+    return false;
+  }
+
+  if (!canSendEmailHourly()) {
+    return false;
+  }
+
+  if (emailForDomainCheck && !canSendToDomain(emailForDomainCheck)) {
+    console.log(
+      "Per-domain hourly cap blocks send to " +
+      emailForDomainCheck
+    );
+    return false;
+  }
+
+  return !_runSendBudgetExhausted();
+}
+
+// ============================================================
+// NEW-LEAD FLOOR (6-8% = 2-3 new/day)
+// ============================================================
+// Guarantees 6-8% of DAILY_LIMIT for NEW leads so fresh leads
+// are not starved by a large follow-up queue. Follow-ups still
+// have priority when overdue (>24h) - only non-overdue follow-ups
+// yield their slot. Keeps 2/5/7 day timing intact.
+
+function _getNewLeadFloor(config) {
+
+  const explicit = Number(config.NEW_LEADS_DAILY_FLOOR);
+  if (!isNaN(explicit) && explicit > 0) {
+    return Math.floor(explicit);
+  }
+
+  const daily = Number(config.DAILY_LIMIT);
+  if (!isNaN(daily) && daily > 0) {
+    return Math.max(2, Math.ceil(daily * 0.08));
+  }
+
+  return 3;
+}
+
+function _hasOverdueFollowUps(config, data) {
+
+  const graceMs = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  for (let i = 1; i < data.length; i++) {
+    const lead = buildLeadFromRow(data, i);
+    if (!ACTIVE_CAMPAIGN_STATUSES.includes(lead.status)) continue;
+    if (!lead.threadId || !lead.lastEmailDate) continue;
+    const followUp = FOLLOWUP_STEPS[lead.status];
+    if (!followUp) continue;
+    const delay = getFollowUpDelay(config, followUp.number);
+    const last = new Date(lead.lastEmailDate).getTime();
+    if (isNaN(last)) continue;
+    // Due and overdue by grace.
+    if (now - last >= delay.milliseconds + graceMs) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function _countRemainingNewLeads(data) {
+
+  let c = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][LEADS_COL.STATUS] || "").trim() === "NEW" && String(data[i][LEADS_COL.EMAIL] || "").trim() !== "") {
+      c++;
+    }
+  }
+  return c;
+}
+
+// ============================================================
+// UNSUBSCRIBE HEADER HELPERS
+// ============================================================
+// Shared by both send paths: build the signed List-Unsubscribe
+// URL (empty when UNSUBSCRIBE_URL is not configured or signing
+// is unavailable) and append it to the plain-text fallback when
+// the HTML footer would show it - some clients only show text.
+
+function _buildListUnsubscribeForLead(lead, config) {
+
+  try {
+    if (typeof buildSignedUnsubscribeLink === "function") {
+      return buildSignedUnsubscribeLink(lead, config) || "";
+    }
+  } catch (e) {
+    // Signing is best-effort - fall through to no header.
+  }
+
+  return "";
+}
+
+function _appendUnsubscribeLine(plainText, unsubscribeUrl) {
+
+  let output = plainText || "";
+
+  if (
+    unsubscribeUrl &&
+    output.indexOf("Unsubscribe") === -1
+  ) {
+    output += "\n\nUnsubscribe: " + unsubscribeUrl;
+  }
+
+  return output;
+}
+
+// ============================================================
+// RUN EXECUTION BUDGET
+// ============================================================
+// runAutomation can be killed by the Apps Script time limit
+// (5-6 min depending on the account). A killed run skips the
+// finally block, so the script lock lingers and the next run
+// starts with "Another automation is already running". This
+// self-cap ends the run cleanly (~299s) so the lock is always
+// released and leftover leads defer to the next scheduled run.
+
+var _runDeadline = null;
+var _RUN_BUDGET_MILLISECONDS = 299000; // 299s hard self-cap
+
+function _initRunDeadline() {
+
+  _runDeadline =
+    Date.now() + _RUN_BUDGET_MILLISECONDS;
+}
+
+function _pastRunDeadline() {
+
+  return (
+    _runDeadline !== null &&
+    Date.now() >= _runDeadline
+  );
+}
+
+// Test helper: verifies the execution-budget flag flips once the
+// deadline passes. Safer than logging the live 299s window.
+function testRunDeadline() {
+
+  const previousDeadline = _runDeadline;
+
+  _runDeadline = Date.now() + 1000;
+
+  Utilities.sleep(1100);
+
+  const past = _pastRunDeadline();
+
+  _runDeadline = previousDeadline;
+
+  console.log(
+    "Run deadline test | After 1.1s sleep the 1s budget " +
+    "is spent: " +
+    past
+  );
+
+  return past;
+}
+
 function processEmails() {
 
   const aiConfig = getAIConfig();
@@ -42,6 +247,12 @@ function processEmails() {
   // sender name and reply-to configuration.
   const config = getConfig();
 
+  // Standalone runs (manual invocations outside runAutomation)
+  // get the same execution-time self-cap.
+  if (_runDeadline === null) {
+    _initRunDeadline();
+  }
+
 
   const sheet = getLeadsSheet();
 
@@ -52,6 +263,21 @@ function processEmails() {
   for (let i = 1; i < data.length; i++) {
 
     const row = i + 1;
+
+
+    // =================================
+    // RUN EXECUTION BUDGET
+    // =================================
+
+    if (_pastRunDeadline()) {
+
+      console.log(
+        "Run budget reached (299s). " +
+        "Stopping EMAIL_1 processing."
+      );
+
+      return;
+    }
 
 
     // =================================
@@ -67,6 +293,44 @@ function processEmails() {
     // =================================
 
     if (lead.status !== "NEW") {
+      continue;
+    }
+
+
+    // =================================
+    // SUPPRESSION + DOMAIN BLOCK (S + SuppressionList + SUPPRESSED_DOMAINS)
+    // =================================
+
+    const suppressed =
+      isSuppressed(lead.email);
+
+    const domainBlocked =
+      typeof isBlockedDomainEmail === "function" &&
+      isBlockedDomainEmail(lead.email);
+
+    if (suppressed || domainBlocked) {
+      const cat = suppressed
+        ? getSuppressionCategory(lead.email)
+        : "POLICY_REJECTION (SUPPRESSED_DOMAINS block)";
+
+      console.log(
+        "Suppressed skipped: " +
+        lead.email +
+        " | Category: " + cat
+      );
+
+      continue;
+    }
+
+    // Defensive: Leads S already marked HARD but sheet not yet INVALID.
+    if (
+      String(lead.bounceCategory || "").trim() === "HARD_BOUNCE" &&
+      String(lead.status || "").trim() !== "INVALID"
+    ) {
+      console.log(
+        "Bounce Category HARD_BOUNCE without INVALID status - " +
+        "skipping " + lead.email
+      );
       continue;
     }
 
@@ -281,15 +545,35 @@ function processEmails() {
 
 
     // =================================
-    // DAILY LIMIT
+    // SEND BUDGET (daily + hourly + per-domain + per-run)
     // =================================
 
-    if (!canSendEmail()) {
+    if (!_sendBudgetOk(lead.email)) {
 
       console.log(
-        "Daily sending limit reached. " +
+        "Send budget reached (daily/hourly/domain/per-run). " +
         "Email 1 not sent to " +
         lead.email
+      );
+
+      // Per-domain hourly blocks should skip this lead but let
+      // later leads with different domains proceed.
+      if (
+        !canSendEmail() ||
+        isQuotaBlocked() ||
+        _runSendBudgetExhausted()
+      ) {
+        return;
+      }
+
+      continue;
+    }
+
+    if (_pastRunDeadline()) {
+
+      console.log(
+        "Run budget reached (299s). " +
+        "Stopping EMAIL_1 processing."
       );
 
       return;
@@ -323,40 +607,89 @@ function processEmails() {
     // SEND EMAIL
     // =================================
 
+    let threadId = "";
+    let messageId = "";
+
     try {
 
-      const sendOptions = {};
+      // -------------------------------------------------
+      // BUILD RAW MIME (multipart/alternative)
+      // -------------------------------------------------
+      // Same MIME structure as threaded follow-ups, so
+      // EMAIL_1 and follow-ups share one format: From
+      // display name (SENDER_NAME), Reply-To, HTML body
+      // with plain-text fallback.
+
+      // List-Unsubscribe header (signed). Empty when UNSUBSCRIBE_URL
+      // is not configured - header is omitted entirely.
+      const listUnsub =
+        _buildListUnsubscribeForLead(lead, config);
+
+      // Ensure plain-text fallback always contains the unsubscribe
+      // URL when the HTML footer would - some clients only show text.
+      const plainForSend =
+        _appendUnsubscribeLine(body, listUnsub);
+
+      const mimeMessage =
+        buildMultipartAlternative({
+          to: recipient,
+          fromName:
+            config.SENDER_NAME || "",
+          fromEmail:
+            Session.getEffectiveUser().getEmail() || "",
+          replyTo:
+            config.REPLY_TO_EMAIL || "",
+          subject: subject,
+          plainTextBody: plainForSend,
+          htmlBody: htmlBody,
+          listUnsubscribeUrl: listUnsub || ""
+        });
 
 
-      // Configurable Gmail display name
-      if (config.SENDER_NAME) {
+      // -------------------------------------------------
+      // SEND THROUGH GMAIL API
+      // -------------------------------------------------
 
-        sendOptions.name =
-          config.SENDER_NAME;
+      const sentMessage =
+        Gmail.Users.Messages.send(
+          {
+            raw:
+              Utilities.base64EncodeWebSafe(
+                Utilities
+                  .newBlob(mimeMessage)
+                  .getBytes()
+              )
+          },
+          "me"
+        );
+
+
+      if (!sentMessage || !sentMessage.id) {
+
+        throw new Error(
+          "Gmail API returned no message id."
+        );
       }
 
 
-      // Configurable Reply-To
-      if (config.REPLY_TO_EMAIL) {
+      // Authoritative thread ID from the send response —
+      // no post-send search needed.
+      threadId =
+        sentMessage.threadId || "";
 
-        sendOptions.replyTo =
-          config.REPLY_TO_EMAIL;
-      }
-
-
-      // HTML body with plain-text fallback
-      if (htmlBody) {
-
-        sendOptions.htmlBody =
-          htmlBody;
-      }
+      messageId =
+        sentMessage.id;
 
 
-      GmailApp.sendEmail(
-        recipient,
-        subject,
-        body,
-        sendOptions
+      console.log(
+        "Gmail API sent message " +
+        messageId +
+        " | Thread: " +
+        threadId +
+        " | Lead: " +
+        lead.email +
+        " | Actual recipient: " +
+        recipient
       );
 
     } catch (error) {
@@ -368,6 +701,23 @@ function processEmails() {
         error.message
       );
 
+      // Quota errors trip the day-long breaker.
+      if (_isQuotaError(error.message)) {
+        tripQuotaBreaker();
+
+        logActivity(
+          lead,
+          "EMAIL_1",
+          lead.status,
+          "FAILED",
+          "",
+          "",
+          "QUOTA_EXCEEDED: " + error.message
+        );
+
+        // Stop the run - hammering further only burns quota.
+        return;
+      }
 
       logActivity(
         lead,
@@ -379,6 +729,11 @@ function processEmails() {
         error.message
       );
 
+      // Failure pacing - mirrors success path so a quota/burst
+      // does not hammer Gmail at 80/min.
+      if (!_pastRunDeadline() && i < data.length - 1) {
+        Utilities.sleep(_getRandomDelay(3, 4));
+      }
 
       continue;
     }
@@ -388,59 +743,12 @@ function processEmails() {
 
 
     // =================================
-    // FIND GMAIL THREAD
-    // =================================
-
-    // Give Gmail a moment to expose the
-    // newly-created thread to search.
-    Utilities.sleep(2000);
-
-
-    // Search using recipient rather than
-    // lead.email because TEST_MODE may
-    // redirect the actual destination.
-    const threads =
-      GmailApp.search(
-        'in:sent to:"' +
-        recipient +
-        '" subject:"' +
-        subject +
-        '"',
-        0,
-        5
-      );
-
-
-    let threadId = "";
-
-
-    if (threads.length > 0) {
-
-      threadId =
-        threads[0].getId();
-
-      console.log(
-        "Thread ID saved: " +
-        threadId
-      );
-
-    } else {
-
-      console.log(
-        "WARNING: Email sent but Gmail thread " +
-        "could not be found for lead " +
-        lead.email +
-        " | Actual recipient: " +
-        recipient
-      );
-    }
-
-
-    // =================================
     // BATCH UPDATE LEAD
     // =================================
     // Columns: J(10) K(11) L(12) M(13)
     //          N(14) O(15) P(16) Q(17) R(18)
+    // P holds the authoritative thread ID returned by the
+    // Gmail API send response.
 
     sheet
       .getRange(row, 10, 1, 9)
@@ -466,10 +774,14 @@ function processEmails() {
       "EMAIL_1",
       "EMAIL_1_SENT",
       "SUCCESS",
-      "",
+      messageId,
       threadId,
       ""
     );
+
+    // Keep the in-memory daily count and run budget accurate.
+    _incrementDailyCountCache();
+    _recordRunSend();
 
 
     console.log(
@@ -483,6 +795,11 @@ function processEmails() {
     // =================================
 
     if (i < data.length - 1) {
+
+      // Never sleep past the execution budget.
+      if (_pastRunDeadline()) {
+        break;
+      }
 
       const wait = _getRandomDelay(3, 4);
 
