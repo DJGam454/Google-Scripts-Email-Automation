@@ -376,6 +376,47 @@ function buildPlaceholderValues(lead, context) {
     "A short note from {{SenderName}}";
 
   // --------------------------------
+  // UNSUBSCRIBE DEEP LINK
+  // --------------------------------
+  // Built only when a web-app URL is configured in the Config
+  // sheet (UNSUBSCRIBE_URL). The recipient's address and Lead ID
+  // are URL-encoded so doGet (Unsubscribe.js) can mark the lead
+  // DO_NOT_CONTACT with one click.
+
+  const unsubscribeUrl = String(
+    config.UNSUBSCRIBE_URL || ""
+  ).trim();
+
+  if (unsubscribeUrl && lead) {
+
+    // Prefer the HMAC-signed link so the List-Unsubscribe header
+    // and the visible footer link are identical and One-Click
+    // verifiable. Fall back to the plain link if signing is not
+    // available (e.g. during early bootstrap before PropertiesService
+    // is accessible).
+    let signed = "";
+
+    try {
+      if (typeof buildSignedUnsubscribeLink === "function") {
+        signed = buildSignedUnsubscribeLink(lead, config);
+      }
+    } catch (e) {
+      signed = "";
+    }
+
+    if (signed) {
+      values["UnsubscribeLink"] = signed;
+    } else {
+      values["UnsubscribeLink"] =
+        unsubscribeUrl +
+        "?email=" +
+        encodeURIComponent(String(lead.email || "")) +
+        "&id=" +
+        encodeURIComponent(String(lead.leadId || ""));
+    }
+  }
+
+  // --------------------------------
   // 6. NESTED EXPANSION
   // --------------------------------
   // Values such as {{EmailSignature}} or {{HeroTitle}} may
