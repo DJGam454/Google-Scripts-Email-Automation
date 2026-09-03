@@ -384,3 +384,93 @@ production.
   no tracking pixels (deliverability-first).
 
 ---
+
+## 11. Hardening & Frontier Port (2026-09-03)
+
+Ported the reusable engineering features from the frontier project
+(Doctor-Email-Automation) into this public repo. Nothing private was
+carried over: no real lead data, addresses, phone numbers, brand names,
+logos, script IDs or project-specific window dates. Everything doctor- or
+clinic-specific was either generalised (config-driven) or left out.
+
+### New files
+- `Replies.js` — automatic human-reply detection. Thread scan via
+  `Gmail.Users.Threads.get` (metadata format) plus a mailbox fallback
+  (recent-INBOX list + `from:` search) for replies that start a new
+  thread. Filters auto-replies/bounces via `Auto-Submitted`/`Precedence`/
+  `X-Auto-Response-Suppress` and never marks a message newer than the
+  lead's last send as a reply. `REPLIED` is terminal, so each lead flips
+  exactly once.
+- `Unsubscribe.js` — one-click unsubscribe web app (RFC 8058). HMAC-signed
+  per-lead links (`UNSUB_TOKEN_SECRET` in Script Properties), GET
+  confirmation page, POST one-click endpoint, writes
+  `DO_NOT_CONTACT` + SuppressionList `UNSUBSCRIBED` + ActivityLog
+  `UNSUBSCRIBE`. Confirmation page is generic (company name from
+  `COMPANY_NAME` config), no external image assets.
+- `SuppressionReconcile.js` — 30-day Gmail DSN backfill
+  (`reconcileMailboxBounces`, dry-run default), historical suppression
+  audit (`dryRunHistoricalSuppression`), and config-driven domain blocking
+  (`SUPPRESSED_DOMAINS` in Config) with `dryRunDomainSuppression` /
+  `liveDomainSuppression`. No hardcoded provider domains.
+- `TestModeFix.js` — `reconcileTestDates` (FAST_TEST minute-scale dates vs
+  Gmail `internalDate`), `purgeTestActivityLog` (minute-burst detection,
+  archive-then-delete), `ensureLocalTimeDisplayHelper`. Windows are
+  parameters, not hardcoded dates.
+- `VerificationCleanup.js` — `applyVerificationCleanup` applies a bulk
+  verification export (undeliverable → HARD_BOUNCE, risky → UNKNOWN).
+  Lists are empty placeholders; no lead data committed.
+
+### Leads contract (A–V)
+- Appended columns: S Bounce Category, T Bounce Diagnostic, U Suppressed
+  At, V Retry Count (`ensureLeadsBounceColumns`).
+- New `SuppressionList` sheet (Email | Category | Diagnostic | First Seen |
+  Last Seen | Count | Source) with `isSuppressed` /
+  `getSuppressionCategory` / `addToSuppressionList` (idempotent).
+- New `ACTIVE_CAMPAIGN_STATUSES`; `buildLeadFromRow` now exposes
+  `bounceCategory`, `bounceDiagnostic`, `suppressedAt`, `retryCount`.
+
+### Send-path hardening (EmailEngine.js / Validation.js)
+- `MAX_SENDS_PER_RUN` per-execution send budget.
+- `NEW_LEADS_DAILY_FLOOR` (default 8% of `DAILY_LIMIT`, min 2) so NEW
+  leads are never starved by the follow-up queue; overdue follow-ups
+  (>24 h past due) keep priority.
+- 299 s execution self-cap (`_runDeadline`) — lock is always released.
+- Gmail quota circuit breaker (`tripQuotaBreaker`, blocks until midnight,
+  `QUOTA_BLOCK_UNTIL` Script Property).
+- Hourly cap (`HOURLY_LIMIT`) + per-group caps (`HOURLY_LIMIT_YAHOO`,
+  `HOURLY_LIMIT_OUTLOOK`, `HOURLY_LIMIT_ICLOUD`).
+- Suppression + blocked-domain gates before every send path.
+- EMAIL_1 now sends raw multipart/alternative via the Gmail API with an
+  authoritative `threadId` (no post-send search), matching follow-ups.
+- `List-Unsubscribe` / `List-Unsubscribe-Post` headers (RFC 8058) and
+  `{{UnsubscribeLink}}` in the HTML footer + plain-text fallback.
+- `runAutomation` pipeline: bounces → replies → AI personalisation →
+  follow-ups → email 1, with deadline checks between stages; optional
+  `SKIP_REPLIES_IN_MAIN_RUN` for a dedicated reply trigger.
+- Bounce classifier: 4 categories (HARD/SOFT/POLICY/UNKNOWN), soft-retry
+  cap (3 → UNKNOWN), message-ID dedup cache, 7-day DSN window.
+
+### Cleanups applied
+- Removed dead `getDelay()` (superseded by `getFollowUpDelay`).
+- Removed legacy `body` field from `buildEmailPreview` return.
+- Renamed `Tests.js: testBounceParser` → `testExtractBouncedEmail`
+  (classifier test lives next to the classifier in Bounces.js — no
+  duplicate function names).
+- Dashboard mode cells now parse text booleans via `isFlagTrue`; Failed
+  Actions KPI excludes quota-flood rows.
+- Added `.claspignore` so docs/workbooks never reach the Apps Script
+  project.
+
+### Config keys added by `ensureHardeningMigration`
+`HOURLY_LIMIT`, `HOURLY_LIMIT_YAHOO`, `HOURLY_LIMIT_OUTLOOK`,
+`HOURLY_LIMIT_ICLOUD`, `MAX_SENDS_PER_RUN`, `NEW_LEADS_DAILY_FLOOR`,
+`SUPPRESSED_DOMAINS`, `SKIP_REPLIES_IN_MAIN_RUN`, `SEND_WINDOWS`,
+`UNSUBSCRIBE_URL` (set after deploying the web app).
+
+### Post-deploy checklist
+1. Run `ensureHardeningMigration()` once.
+2. Deploy Unsubscribe.js as a web app; paste `UNSUBSCRIBE_URL` in Config.
+3. Optional: add a 5-minute `checkReplies()` trigger and set
+   `SKIP_REPLIES_IN_MAIN_RUN=TRUE`.
+4. Dry-run the one-time helpers before any live run
+   (`reconcileMailboxBounces(true)`, `applyVerificationCleanup(true)`).
