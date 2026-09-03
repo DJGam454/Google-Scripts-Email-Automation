@@ -343,6 +343,14 @@ function getCampaignNumber(currentCampaign) {
 
   return Number(match[0]);
 }
+// Run-scoped memo cache so the ActivityLog is scanned once per
+// execution instead of once per EMAIL_1 candidate.
+var _duplicateCache = null;
+
+function _resetDuplicateCache() {
+  _duplicateCache = {};
+}
+
 function hasDuplicateCampaign(email, service, leadId) {
 
   const normalizedEmail = String(email || "")
@@ -359,10 +367,27 @@ function hasDuplicateCampaign(email, service, leadId) {
     return false;
   }
 
+  if (_duplicateCache === null) {
+    _duplicateCache = {};
+  }
+
+  const cacheKey =
+    normalizedEmail + "|" + normalizedService;
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      _duplicateCache,
+      cacheKey
+    )
+  ) {
+    return _duplicateCache[cacheKey];
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activitySheet = ss.getSheetByName("ActivityLog");
 
   if (!activitySheet || activitySheet.getLastRow() < 2) {
+    _duplicateCache[cacheKey] = false;
     return false;
   }
 
@@ -397,9 +422,12 @@ function hasDuplicateCampaign(email, service, leadId) {
       result === "SUCCESS" &&
       loggedLeadId !== normalizedLeadId
     ) {
+      _duplicateCache[cacheKey] = true;
       return true;
     }
   }
+
+  _duplicateCache[cacheKey] = false;
 
   return false;
 }
