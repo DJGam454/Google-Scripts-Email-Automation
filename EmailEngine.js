@@ -817,13 +817,39 @@ function processFollowUps() {
 
   const config = getConfig();
 
+  // Standalone runs (manual invocations outside runAutomation)
+  // get the same execution-time self-cap.
+  if (_runDeadline === null) {
+    _initRunDeadline();
+  }
+
   const sheet = getLeadsSheet();
 
   const data =
     sheet.getDataRange().getValues();
 
+  // Aggregated counts for leads skipped by terminal status —
+  // per-lead lines for these would flood the execution log
+  // (thousands of leads can be DO_NOT_CONTACT/REPLIED).
+  const skipCounts = {};
+
 
   for (let i = 1; i < data.length; i++) {
+
+    // =================================
+    // RUN EXECUTION BUDGET
+    // =================================
+
+    if (_pastRunDeadline()) {
+
+      console.log(
+        "Run budget reached (299s). " +
+        "Stopping follow-up processing."
+      );
+
+      break;
+    }
+
 
     const lead =
       buildLeadFromRow(data, i);
@@ -844,6 +870,16 @@ function processFollowUps() {
       continue;
     }
 
+    // =================================
+    // SUPPRESSION + DOMAIN BLOCK (pre-follow-up)
+    // =================================
+
+    if (isSuppressed(lead.email) || (typeof isBlockedDomainEmail === "function" && isBlockedDomainEmail(lead.email))) {
+      skipCounts["SUPPRESSED"] =
+        (skipCounts["SUPPRESSED"] || 0) + 1;
+      continue;
+    }
+
 
     // =================================
     // MANUAL STOP
@@ -851,12 +887,8 @@ function processFollowUps() {
 
     if (STOP_STATUSES.includes(lead.status)) {
 
-      console.log(
-        "Skipping " +
-        lead.email +
-        " because status is " +
-        lead.status
-      );
+      skipCounts[lead.status] =
+        (skipCounts[lead.status] || 0) + 1;
 
       continue;
     }
@@ -1017,13 +1049,56 @@ function processFollowUps() {
       continue;
     }
 
+    // =================================
+    // SEND BUDGET CHECK
+    // =================================
+    // Once the daily limit, hourly, per-domain, or MAX_SENDS_PER_RUN is
+    // reached for a global reason, stop scanning. Per-domain hourly
+    // blocks are handled per-lead inside sendFollowUp, so here we only
+    // break on global exhaustion.
 
-    console.log(
-      "Preparing " +
-      followUp.step +
-      " for " +
-      lead.email
-    );
+    if (!_sendBudgetOk()) {
+
+      console.log(
+        "Send budget reached (daily/hourly/per-run/quota). " +
+        "Stopping follow-up processing."
+      );
+
+      break;
+    }
+
+    // =================================
+    // NEW-LEAD FLOOR (2-3/day, follow-up priority)
+    // =================================
+    // If no follow-up is overdue, reserve floor slots for NEW.
+    // When overdue exists, follow-ups take all remaining budget.
+
+    const floor = _getNewLeadFloor(config);
+    const remainingNew = _countRemainingNewLeads(data);
+    if (remainingNew > 0 && floor > 0) {
+      const dailyLimit = Number(config.DAILY_LIMIT) || 0;
+      const sentToday = _dailyCountCache !== null ? _dailyCountCache : getEmailsSentToday();
+      const remaining = Math.max(0, dailyLimit - sentToday - _runSendCount);
+      if (remaining <= floor && remaining > 0) {
+        if (!_hasOverdueFollowUps(config, data)) {
+          console.log(
+            "New-lead floor: " + remaining + " slots left <= floor " + floor +
+            ", no overdue follow-ups — yielding to NEW leads."
+          );
+          break;
+        }
+      }
+    }
+
+    if (_pastRunDeadline()) {
+
+      console.log(
+        "Run budget reached (299s). " +
+        "Stopping follow-up processing."
+      );
+
+      break;
+    }
 
 
     const sent =
@@ -1045,6 +1120,17 @@ function processFollowUps() {
         lead.email
       );
     }
+  }
+
+
+  const skipKeys = Object.keys(skipCounts);
+
+  if (skipKeys.length > 0) {
+
+    console.log(
+      "Follow-up skip summary: " +
+      JSON.stringify(skipCounts)
+    );
   }
 }
 
@@ -1147,15 +1233,65 @@ function sendFollowUp(
 
 
   // =================================
-  // DAILY LIMIT
+  // SEND BUDGET (daily + hourly + per-domain + per-run)
   // =================================
 
-  if (!canSendEmail()) {
+  if (!_sendBudgetOk(lead.email)) {
+
+    // Per-domain hourly block defers this lead only.
+    if (
+      !canSendToDomain(lead.email) &&
+      canSendEmail() &&
+      canSendEmailHourly() &&
+      !isQuotaBlocked() &&
+      !_runSendBudgetExhausted()
+    ) {
+      console.log(
+        "Per-domain hourly cap defers " +
+        templateStep +
+        " for " +
+        lead.email
+      );
+      return false;
+    }
 
     console.log(
-      "Daily sending limit reached. " +
+      "Send budget reached (global). " +
       templateStep +
       " not sent to " +
+      lead.email
+    );
+
+    return false;
+  }
+
+  // =================================
+  // SUPPRESSION + DOMAIN BLOCK (follow-up path)
+  // =================================
+
+  if (isSuppressed(lead.email) || (typeof isBlockedDomainEmail === "function" && isBlockedDomainEmail(lead.email))) {
+    console.log(
+      "Suppressed - skipping " +
+      templateStep +
+      " for " +
+      lead.email
+    );
+    return false;
+  }
+
+
+  // =================================
+  // RUN EXECUTION BUDGET
+  // =================================
+  // Defer the follow-up instead of sending past the cap —
+  // the lead keeps its current status so the next run sends it.
+
+  if (_pastRunDeadline()) {
+
+    console.log(
+      "Run budget reached (299s). " +
+      templateStep +
+      " deferred for " +
       lead.email
     );
 
@@ -1200,6 +1336,21 @@ function sendFollowUp(
       error.message
     );
 
+    if (_isQuotaError(error.message)) {
+      tripQuotaBreaker();
+
+      logActivity(
+        lead,
+        templateStep,
+        lead.status,
+        "FAILED",
+        "",
+        lead.threadId,
+        "QUOTA_EXCEEDED: " + error.message
+      );
+
+      return false;
+    }
 
     logActivity(
       lead,
@@ -1210,7 +1361,6 @@ function sendFollowUp(
       lead.threadId,
       error.message
     );
-
 
     return false;
   }
@@ -1260,6 +1410,10 @@ function sendFollowUp(
     ""
   );
 
+  // Keep the in-memory daily count and run budget accurate.
+  _incrementDailyCountCache();
+  _recordRunSend();
+
 
   console.log(
     templateStep +
@@ -1292,6 +1446,17 @@ function sendThreadedFollowUp(lead, email, template) {
       recipient
     );
   }
+
+  // Named From so follow-ups display the same sender as Email 1
+  // (GmailApp gets `name` from Config; MIME sends must set the
+  // From header themselves).
+  const fromName =
+    config.SENDER_NAME || "";
+
+  const fromEmail =
+    Session.getEffectiveUser().getEmail() ||
+    config.REPLY_TO_EMAIL ||
+    "";
 
 
   // --------------------------------
@@ -1393,14 +1558,27 @@ function sendThreadedFollowUp(lead, email, template) {
   // BUILD MIME EMAIL (multipart/alternative)
   // --------------------------------
 
+  const listUnsubFollow =
+    _buildListUnsubscribeForLead(lead, config);
+
+  const plainForFollow =
+    _appendUnsubscribeLine(
+      email.plainTextBody,
+      listUnsubFollow
+    );
+
   const mimeMessage =
     buildMultipartAlternative({
       to: recipient,
+      fromName: fromName,
+      fromEmail: fromEmail,
+      replyTo: config.REPLY_TO_EMAIL || "",
       subject: subject,
       inReplyTo: latestMessageId,
       references: latestMessageId,
-      plainTextBody: email.plainTextBody,
-      htmlBody: email.htmlBody
+      plainTextBody: plainForFollow,
+      htmlBody: email.htmlBody,
+      listUnsubscribeUrl: listUnsubFollow || ""
     });
 
 
@@ -1485,6 +1663,14 @@ function runAutomation() {
 
     const config = getConfig();
 
+    // Reset run-scoped budgets, caches and quota view.
+    _initRunSendCap(config);
+    _initRunDeadline();
+    _resetDailyCountCache();
+    _resetDuplicateCache();
+    _resetHourlyDomainCache();
+    _resetSuppressionCache();
+
     // Master ON/OFF switch
     if (!isFlagTrue(config.AUTOMATION_ENABLED)) {
 
@@ -1517,13 +1703,61 @@ console.log("=== AUTOMATION STARTED ===");
 // 1. Detect bounced emails first
 checkBounces();
 
-// 2. Generate AI personalisation for NEW leads
+if (_pastRunDeadline()) {
+
+  console.log(
+    "Run budget reached (299s). " +
+    "Stopping after bounce check."
+  );
+
+  return;
+}
+
+// 2. Detect human replies before anything else sends.
+//    When a dedicated checkReplies trigger runs every few
+//    minutes, this scan can be skipped here to free the whole
+//    send budget for this run.
+if (!isFlagTrue(config.SKIP_REPLIES_IN_MAIN_RUN)) {
+  checkReplies();
+}
+
+if (_pastRunDeadline()) {
+
+  console.log(
+    "Run budget reached (299s). " +
+    "Stopping after reply check."
+  );
+
+  return;
+}
+
+// 3. Generate AI personalisation for NEW leads
 generateMissingPersonalizations();
 
-// 3. Existing campaigns/follow-ups get priority
+if (_pastRunDeadline()) {
+
+  console.log(
+    "Run budget reached (299s). " +
+    "Stopping after AI personalisation."
+  );
+
+  return;
+}
+
+// 4. Existing campaigns/follow-ups get priority
 processFollowUps();
 
-// 4. Send Email 1 to NEW leads
+if (_pastRunDeadline()) {
+
+  console.log(
+    "Run budget reached (299s). " +
+    "Stopping after follow-ups."
+  );
+
+  return;
+}
+
+// 5. Send Email 1 to NEW leads
 processEmails();
 
 console.log("=== AUTOMATION COMPLETED ===");
@@ -1540,15 +1774,6 @@ console.log("=== AUTOMATION COMPLETED ===");
 
     console.log("=== LOCK RELEASED ===");
   }
-}
-
-function getDelay(config, settingName) {
-
-  if (isFastTestMode(config)) {
-    return 0;
-  }
-
-  return Number(config[settingName]);
 }
 
 function getFollowUpDelay(config, followUpNumber) {
