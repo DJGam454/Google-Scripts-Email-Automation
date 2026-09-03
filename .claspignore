@@ -1,0 +1,16 @@
+**/.git/**
+**/.gitignore
+**/.DS_Store
+**/node_modules/**
+**/__pycache__/**
+**/*.pyc
+**/*.md
+**/*.txt
+**/*.xlsx
+**/*.log
+.opencode/**
+Sheets/**
+tools/**
+opencode.json
+package.json
+package-lock.json
