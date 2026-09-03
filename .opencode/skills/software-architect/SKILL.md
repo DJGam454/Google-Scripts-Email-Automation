@@ -17,18 +17,25 @@ Trigger (time-based) ──► runAutomation() [EmailEngine.js]
                            │ Schedule gate (Scheduling.js)
                            ▼
                    1. checkBounces()          [Bounces.js]
-                   2. generateMissingPersonalizations() [AI.js]
-                   3. processFollowUps()      [EmailEngine.js]
-                   4. processEmails()         [EmailEngine.js]
+                   2. checkReplies()          [Replies.js]
+                   3. generateMissingPersonalizations() [AI.js]
+                   4. processFollowUps()      [EmailEngine.js]
+                   5. processEmails()         [EmailEngine.js]
 ```
 
 The pipeline order is deliberate and must be preserved:
 
 1. **Bounces first** — purge bad addresses before any new sends.
-2. **AI personalisation next** — NEW leads need intros before they can send.
-3. **Follow-ups before new emails** — existing conversations are prioritised
+2. **Replies next** — a lead that just replied must never receive a
+   follow-up in this run (replies → `REPLIED` stop-status).
+3. **AI personalisation next** — NEW leads need intros before they can send.
+4. **Follow-ups before new emails** — existing conversations are prioritised
    over new cold outreach.
-4. **Email 1 last** — new leads are the tail end of the run.
+5. **Email 1 last** — new leads are the tail end of the run.
+
+Every stage boundary checks the 299 s execution self-cap (`_pastRunDeadline()`)
+so the script lock is always released cleanly; `SKIP_REPLIES_IN_MAIN_RUN` can
+defer the reply scan to a dedicated 5-minute trigger.
 
 ## File ownership (separation of concerns)
 
@@ -37,18 +44,23 @@ Apps Script shares one global scope. Keep it that way:
 
 | File | Owns |
 | --- | --- |
-| `EmailEngine.js` | Pipeline orchestration and send mechanics (delays, threading, status transitions, HTML wiring into both send paths) |
-| `Leads.js` | Leads sheet contract: column map, statuses, follow-up step map, cached sheet reads, `buildLeadFromRow()` |
-| `Templates.js` | Template lookup (first-match + variants + random selection) and placeholder personalisation |
-| `HtmlEmailEngine.js` | HTML email rendering: themes, `{{Component}}` tokens, plain-text fallback, multipart MIME builder |
+| `EmailEngine.js` | Pipeline orchestration and send mechanics (delays, budgets, execution self-cap, threading, status transitions, suppression gates, HTML wiring into both send paths) |
+| `Leads.js` | Leads sheet contract: column map (A–V), statuses, active-campaign statuses, follow-up step map, cached sheet reads, `buildLeadFromRow()`, suppression layer (SuppressionList + S–V writes) |
+| `Templates.js` | Template lookup (first-match + variants + random selection) and placeholder personalisation (incl. `{{UnsubscribeLink}}`) |
+| `HtmlEmailEngine.js` | HTML email rendering: themes, `{{Component}}` tokens, plain-text fallback, multipart MIME builder (From/Reply-To/List-Unsubscribe) |
 | `AI.js` | All Gemini interaction: rate limiter, website research, personalisation generation and validation |
-| `Bounces.js` | Gmail bounce detection and DSN parsing |
+| `Replies.js` | Human-reply detection: thread scan, mailbox fallback, auto-reply filtering |
+| `Bounces.js` | Gmail bounce detection, DSN classification (4 categories), suppression writes, dedup |
+| `Unsubscribe.js` | Unsubscribe web-app endpoints, HMAC signing, confirmation page |
+| `SuppressionReconcile.js` | Historical bounce backfill, 30-day mailbox reconcile, config-driven domain blocking |
+| `VerificationCleanup.js` | Bulk verification export application (empty lists by default) |
+| `TestModeFix.js` | One-time test-date reconcile, ActivityLog burst purge, local-time display helper |
 | `Campaigns.js` | Service rotation, campaign lifecycle, duplicate detection |
-| `Config.js` | Reading Config/AIConfig sheets through cache |
+| `Config.js` | Reading Config/AIConfig sheets through cache, hardening migration |
 | `Dashboard.js` | UI/setup, previews (`buildEmailPreview`, `generatePreview`), `logActivity()` |
 | `Modes.js` | Mode flags and recipient resolution (`getActualRecipient`), `isFlagTrue()` |
-| `Scheduling.js` | Working-day and sending-window logic |
-| `Validation.js` | Email validation and daily-limit counting |
+| `Scheduling.js` | Working-day and sending-window logic (incl. `SEND_WINDOWS`) |
+| `Validation.js` | Email validation, daily/hourly/domain send limits, quota circuit breaker |
 | `Tests.js` | Cross-cutting `test*()` helpers |
 
 Placement rules:
@@ -57,8 +69,9 @@ Placement rules:
   read/write of config → `Config.js`. New campaign lifecycle logic →
   `Campaigns.js`. New lead-data access → `Leads.js`. New HTML/MIME content
   work → `HtmlEmailEngine.js`; new template/placeholder logic → `Templates.js`.
-- Do not create new top-level files unless the concern is genuinely new
-  (a future example: a `Replies.js` for reply detection).
+  New reply-detection logic → `Replies.js`. New suppression/backfill logic →
+  `SuppressionReconcile.js` or the `Leads.js` suppression layer.
+- Do not create new top-level files unless the concern is genuinely new.
 - Test helpers live next to the code they test (`testConfig` in Config.js) or
   in `Tests.js` for cross-cutting checks — never inline in production paths.
 

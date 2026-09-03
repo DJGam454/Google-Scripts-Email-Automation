@@ -37,19 +37,24 @@ single Apps Script project via `clasp` (see `.clasp.json` for the target
 
 | File | Responsibility |
 | --- | --- |
-| `EmailEngine.js` | Orchestration: `runAutomation()`, `processEmails()`, `processFollowUps()`, `sendFollowUp()`, `sendThreadedFollowUp()`, delay helpers. Sends HTML via `renderHtmlEmail()` (`htmlBody` on GmailApp path, multipart/alternative MIME on Gmail API path) |
-| `Leads.js` | Shared data layer: `LEADS_COL` map, `LEAD_STATUS`, `STOP_STATUSES`, `FOLLOWUP_STEPS`, `getLeadsSheet()`, `getLeadsData()`, `buildLeadFromRow()` (per-execution cached reads) |
-| `Templates.js` | `getTemplate()`, `getTemplateVariants()`, `getRandomTemplate()`, `personaliseTemplate()`, `buildPlaceholderValues()`, `applyPlaceholderValues()`, `refreshTemplatesCache()` |
-| `HtmlEmailEngine.js` | `renderHtmlEmail()` (HTML skeleton + `{{Component}}` tokens + theme), `getTheme()`, `buildMultipartAlternative()`, `htmlToPlainText()`, `DEFAULT_THEMES` |
+| `EmailEngine.js` | Orchestration: `runAutomation()`, `processEmails()`, `processFollowUps()`, `sendFollowUp()`, `sendThreadedFollowUp()`, delay helpers, run send budget, 299 s execution self-cap. Sends HTML via `renderHtmlEmail()` (`htmlBody` on GmailApp path, multipart/alternative MIME on Gmail API path — EMAIL_1 now uses the MIME path too) |
+| `Leads.js` | Shared data layer: `LEADS_COL` map (A–V), `LEAD_STATUS`, `STOP_STATUSES`, `ACTIVE_CAMPAIGN_STATUSES`, `FOLLOWUP_STEPS`, `getLeadsSheet()`, `getLeadsData()`, `buildLeadFromRow()`, plus the suppression layer (`SuppressionList` sheet, `isSuppressed`, `addToSuppressionList`, `ensureLeadsBounceColumns`, `writeLeadBounceState`) |
+| `Templates.js` | `getTemplate()`, `getTemplateVariants()`, `getRandomTemplate()`, `personaliseTemplate()`, `buildPlaceholderValues()` (incl. `{{UnsubscribeLink}}`), `applyPlaceholderValues()`, `refreshTemplatesCache()` |
+| `HtmlEmailEngine.js` | `renderHtmlEmail()` (HTML skeleton + `{{Component}}` tokens + theme), `getTheme()`, `buildMultipartAlternative()` (From/Reply-To/List-Unsubscribe support), `htmlToPlainText()`, `DEFAULT_THEMES` |
 | `AI.js` | Gemini calls, rate limiter, website research, personalisation generation |
-| `Bounces.js` | `checkBounces()`, `extractBouncedEmail()` |
+| `Replies.js` | Automatic reply detection: `checkReplies()` (thread scan + mailbox fallback), auto-reply filtering, per-lead caching |
+| `Bounces.js` | `checkBounces()`, `classifyBounce()` (HARD/SOFT/POLICY/UNKNOWN), suppression writes, message-ID dedup |
+| `Unsubscribe.js` | One-click unsubscribe web app: `doGet`/`doPost` (RFC 8058), HMAC-signed links, `buildSignedUnsubscribeLink()` |
+| `SuppressionReconcile.js` | 30-day mailbox bounce backfill (`reconcileMailboxBounces`), historical audit, config-driven domain blocking (`isBlockedDomainEmail`, `SUPPRESSED_DOMAINS`) |
+| `VerificationCleanup.js` | `applyVerificationCleanup()` — bulk verification export application (lists empty by default) |
+| `TestModeFix.js` | One-time helpers: `reconcileTestDates()`, `purgeTestActivityLog()`, `ensureLocalTimeDisplayHelper()` |
 | `Campaigns.js` | Service rotation: `getServices()`, `getNextService()`, `finishCurrentCampaign()`, `hasDuplicateCampaign()` |
-| `Config.js` | `getConfig()`, `getAIConfig()` — reads Config/AIConfig sheets with `CacheService` |
+| `Config.js` | `getConfig()`, `getAIConfig()` — reads Config/AIConfig sheets with `CacheService`; `ensureHardeningMigration()` one-click setup |
 | `Dashboard.js` | `setupDashboard()`, `buildEmailPreview()`, `generatePreview()`, `logActivity()` |
 | `Modes.js` | `isTestMode()`, `isPreviewMode()`, `isFastTestMode()`, `getActualRecipient()` |
-| `Scheduling.js` | Working-day and sending-window checks |
+| `Scheduling.js` | Working-day and sending-window checks (`SEND_WINDOWS` minute ranges) |
 | `Tests.js` | Cross-cutting `test*()` helpers |
-| `Validation.js` | `canSendEmail()`, `getEmailsSentToday()`, `isValidEmail()` |
+| `Validation.js` | `canSendEmail()`, `getEmailsSentToday()`, `canSendEmailHourly()`, `canSendToDomain()`, quota circuit breaker, `isValidEmail()` |
 | `appsscript.json` | Project manifest (timezone `Asia/Kolkata`, Gmail advanced service, V8) |
 
 ## Services and APIs used
