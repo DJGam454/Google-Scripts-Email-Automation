@@ -106,22 +106,22 @@ function setupDashboard() {
 
   dashboard.getRange("A6").setValue("Automation");
   dashboard.getRange("B6").setValue(
-    configMap.AUTOMATION_ENABLED === true ? "ON" : "OFF"
+    isFlagTrue(configMap.AUTOMATION_ENABLED) ? "ON" : "OFF"
   );
 
   dashboard.getRange("C6").setValue("Preview Mode");
   dashboard.getRange("D6").setValue(
-    configMap.PREVIEW_MODE === true ? "ON" : "OFF"
+    isPreviewMode(configMap) ? "ON" : "OFF"
   );
 
   dashboard.getRange("E6").setValue("Test Mode");
   dashboard.getRange("F6").setValue(
-    configMap.TEST_MODE === true ? "ON" : "OFF"
+    isTestMode(configMap) ? "ON" : "OFF"
   );
 
   dashboard.getRange("G6").setValue("Fast Test");
   dashboard.getRange("H6").setValue(
-    configMap.FAST_TEST_MODE === true ? "ON" : "OFF"
+    isFastTestMode(configMap) ? "ON" : "OFF"
   );
 
 dashboard.getRange("I6").setValue("Daily Usage");
@@ -233,7 +233,7 @@ const secondary = [
   ],
 
   ["I12", "Failed Actions", "I13",
-    '=COUNTIF(ActivityLog!J2:J,"FAILED")'
+    '=COUNTIFS(ActivityLog!J2:J,"FAILED",ActivityLog!K2:K,"<>*Service invoked too many times*",ActivityLog!K2:K,"<>QUOTA_EXCEEDED*")'
   ]
 ];
 
@@ -663,7 +663,6 @@ function buildEmailPreview(lead, step) {
 
   return {
     subject: email.subject,
-    body: email.plainTextBody,   // legacy field: plain text
     htmlBody: email.htmlBody,
     plainTextBody: email.plainTextBody,
     variantId: template.variantId,
